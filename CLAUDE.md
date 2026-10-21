@@ -135,8 +135,11 @@ wrappers to primitive element types.
    one `.idr` file that compiles to `.wl` and prints. This is the real
    go/no-go checkpoint — a couple of weekends, and it proves the whole chain.
    Hidden hurdle: `putStrLn` reaches output via the prelude's `%foreign`
-   declarations, which name C/Node functions. The backend must recognize
-   those names and map them to runtime functions.
+   declarations, which name C/Node functions. Every *reachable* foreign
+   needs a spec our backend accepts, or compilation fails (that's how JS
+   behaves). Either map known `C:` names (`idris2_putStr`, …) to runtime
+   functions, as chez does, or attach `wolfram:` specs with `%foreign_impl`.
+   API facts for this step: [docs/idris-backend-api.md](docs/idris-backend-api.md).
 2. **Runtime library in WL.** The bulk of the work (see below).
 3. **FFI + first wrappers.** Marshalling both directions; `Total`, `Map`,
    `Select`, `Length`, `Sort`.
@@ -182,7 +185,7 @@ math, casts, `BelieveMe`, `Crash`) and primitive types (`Int`, `Int8`–`Int64`,
 codegen is a lookup table; definitions live in one runtime file
 (e.g. `Runtime/Prim.wl`).
 
-Behavior below verified on WL 15.0.1.
+Behavior below verified on WL 15.0.1 (cloud) and 15.1.0 (local).
 
 - **Fixed-width ints: compute exact, then wrap.** WL never overflows
   (`BitShiftLeft[2^62, 2]` is `2^64`).
@@ -192,10 +195,15 @@ Behavior below verified on WL 15.0.1.
   primAddInt64[a_, b_] := wrapS[64][a + b]
   ```
   `Integer` needs no wrapping.
-- **Division: copy chez's semantics, don't guess.** WL `Quotient[-7, 2]` is
-  `-4` (floor); truncation gives `-3`. Take the definitions from the chez
-  backend's support code and confirm with differential tests. Division by
-  zero → runtime crash, not `ComplexInfinity`.
+- **Division: Euclidean, as in chez.** The remainder is always ≥ 0 — not
+  truncating, not floor (they differ for negative divisors:
+  `-7 div -2 = 4`, `-7 mod -2 = 1`). `Integer`/`Int`/`IntN` div is
+  Euclidean then wrapped; `BitsN` div is plain quotient; `Mod` is always
+  Euclidean. WL, checked against the chez code:
+  `euclidMod[a_, b_] := Mod[a, Abs[b]]`,
+  `euclidDiv[a_, b_] := (a - Mod[a, Abs[b]])/b`. Details:
+  [docs/idris-backend-api.md](docs/idris-backend-api.md). Division by zero →
+  runtime crash, not `ComplexInfinity`.
 - **Double: the hard one.** WL has no IEEE special values:
 
   | Op | IEEE expects | WL gives |
@@ -234,13 +242,16 @@ Write the primitive edge-case programs first, one per primitive type:
   code is deeply recursive and assumes tail calls don't grow the stack.
   WL *partly* handles this — its evaluator rewrites some tail calls in place,
   counting against `$IterationLimit` instead of the stack. Measured (10^5
-  countdown, `$IterationLimit = Infinity`, WL 15.0.1 cloud kernel):
+  countdown, `$IterationLimit = Infinity`; WL 15.0.1 cloud kernel, then
+  re-verified identically on local WL 15.1.0 Windows `wolframscript`):
 
   | Tail call form | Result |
   |---|---|
   | direct `f[k_] := f[k-1]` | ✅ |
   | inside `If` | ✅ |
   | inside `With` | ✅ |
+  | inside `Which` | ✅ |
+  | inside `Switch` | ✅ |
   | pure `Function` | ✅ |
   | mutual recursion | ✅ |
   | after `CompoundExpression` (`(a; f[k-1])`) | ❌ recursion limit |
@@ -249,11 +260,16 @@ Write the primitive edge-case programs first, one per primitive type:
   | 100,001-deep nested `cons[...]` data | ✅ builds and re-evaluates |
 
   So step 4 may mostly be a **codegen rule**: emit tail calls only in
-  `If`/`With`/`Function` position, never after `;` or inside `Module`, and
-  raise `$IterationLimit`. `Which`/`Switch` untested. Re-verify on local
-  kernel versions. **Non-tail recursion is the real limit** — raising
-  `$RecursionLimit` just moves the crash to the C stack; needs CPS or an
-  accepted cap. Invisible until it breaks on realistic input sizes.
+  `If`/`Which`/`Switch`/`With`/`Function` position, never after `;` or
+  inside `Module`, and raise `$IterationLimit`. **Non-tail recursion is the
+  real limit** — raising `$RecursionLimit` just moves the crash to the C
+  stack; needs CPS or an accepted cap. Invisible until it breaks on
+  realistic input sizes.
+
+  Hitting the limit yields `TerminatedEvaluation["RecursionLimit"]`, and on
+  the local kernel it **aborted the whole top-level evaluation**, not just
+  the failing subexpression — `Check` doesn't catch it. So in generated code
+  a stack overflow kills the run; it can't be caught and recovered from.
 - **Version churn.** The backend links against Idris compiler internals
   (`Core.TT`, `Compiler.Common`), which are not version-stable. Mitigations:
   pin the Idris version, keep the backend small, consume the lowest-level IR
@@ -272,8 +288,8 @@ Write the primitive edge-case programs first, one per primitive type:
   specific `main` fix we need — then pin that exact commit and record why
   here.
 
-  **Unverified:** that v0.8.0 builds cleanly under WSL, and which Chez Scheme
-  version it needs. Check first when setting up the toolchain.
+  **Verified 2026-10-21:** v0.8.0 builds cleanly under WSL Ubuntu 26.04
+  with Chez Scheme 10.0.0 (see Toolchain → Setup).
 - **Four-suspect debugging.** Codegen, runtime, FFI, or the Idris program
   itself. Build good tracing early; differential tests (above) localize most
   bugs.
@@ -294,8 +310,27 @@ idris2 -p idris2 -p contrib -p network Wolfdris.idr -o wolfdris-idris2
 wolframscript -file foo.wl
 ```
 
-Development machine is Windows; building Idris 2 from source needs Chez
-Scheme and a POSIX shell. WSL is probably the path of least resistance.
+### Setup (verified 2026-10-21)
+
+Windows host, everything Idris runs in **WSL 2 (Ubuntu 26.04)**:
+
+- Packages: `chezscheme build-essential git libgmp-dev` (Chez Scheme 10.0.0
+  builds Idris 2 v0.8.0 fine).
+- Idris: `scripts/build-idris.sh` clones v0.8.0 to `~/src/Idris2`,
+  bootstraps from Chez, self-hosts, and runs `make install-api`. Installs to
+  `~/.idris2` (on `PATH` via `~/.bashrc`). The source tree is readable from
+  Windows at `\\wsl.localhost\Ubuntu\home\<user>\src\Idris2`.
+- **Wolfram: use the Windows install from WSL** — no Linux Wolfram needed.
+  `wolframscript.exe` is at
+  `/mnt/c/Program Files/Wolfram Research/WolframScript/wolframscript.exe`;
+  pass it Windows paths via `wslpath -w` (Linux files become
+  `\\wsl.localhost\...`, which works). Local version: WL 15.1.0. The Wolfram
+  MCP kernel is 15.0.0 — test generated code with `wolframscript`, not MCP.
+- Build in the Linux filesystem (`~/...`), not `/mnt/c` — much faster.
+- Driving WSL from PowerShell: quoting `bash -c '...'` through PowerShell
+  breaks easily. Write a script file and run
+  `wsl.exe -d Ubuntu -- bash /mnt/c/.../script.sh`; set `$env:WSL_UTF8='1'`
+  so `wsl.exe` output isn't UTF-16.
 
 ## Distribution
 
