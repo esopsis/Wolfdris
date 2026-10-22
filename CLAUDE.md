@@ -70,6 +70,53 @@ case analysis — and the tail-call positions WL handles natively (see Risks)
 are exactly the forms this stage emits. Revisit only if we need explicit
 stack control (e.g. CPS for non-tail recursion).
 
+### Codegen design (step 1, implemented 2026-10-21)
+
+Code: `src/Wolfdris/{Codegen,Emit,Mangle,Foreign}.idr`, runtime
+`support/wolfram/runtime.wl`.
+
+- **One self-contained `.wl` per program, runtime inlined.** The compiler
+  reads `wolfram/runtime.wl` via Idris's `readDataFile` (found through
+  `IDRIS2_DATA`, set by `scripts/wolfdris`) and pastes it at the top. No
+  run-time paths, no runtime/program version skew. Switch to
+  `Needs["WolfdrisRT`"]` when we build the paclet.
+- **Contexts:** generated symbols are fully qualified in `` WolfdrisGen` ``;
+  the runtime lives in `` WolfdrisRT` `` (written inside
+  `Begin`/`End`).
+- **Shapes:** top-level function → `f[a_, b_] := body`; zero-arity
+  definition → memoised constant `f := f = body`; `NmLam` →
+  `Function[{x}, b]`; `NmLet` → `With`; closure application curried
+  `e[a][b]`; constructors `WolfdrisRT`Con[tag, fields…]` (tag = name
+  string when Idris gives none); con case → bind scrutinee once with
+  `With`, `Switch` on `[[1]]`, fields via `With`; const case → `Switch` on
+  literals; missing default → crash. `NmDelay`/`NmForce` →
+  `Function[{}, e]` / `e[]`. All tail positions are in tail-safe forms.
+- **Mangling:** our own injective `nameStr` (not `show`, which prints `DN`
+  display names), then every non-`[A-Za-z0-9]` char → `$<hex>$`. Prefixes
+  `f` (top-level), `v` (locals), `s` (scrutinee temps), `x` (foreign args).
+- **Literals:** output is pure ASCII — strings use `\:XXXX` / `\|XXXXXX`
+  for non-ASCII; `Char` is its integer code point.
+- **Primitives: one SubValues table in the runtime.** Codegen emits
+  `WolfdrisRT`op["Add", "Int64"][a, b]` generically; the runtime ends with
+  a catch-all `op[keys__][___] := crash["not implemented: …"]`. A missing
+  primitive therefore fails loudly — separate per-op symbols would stay
+  unevaluated and give silent wrong answers. Revisit for speed later.
+  `BelieveMe` and `Crash` are emitted directly.
+- **Foreign table** (`Foreign.idr`, keyed by full Idris name) → runtime
+  function, then a `wolfram:<Fn>` spec (called without world args), else a
+  **compile-time error** naming the function and its specs. Chez doesn't
+  map names — it really calls the C library — and several Prelude
+  foreigns (`fastPack`/`fastUnpack`/`fastConcat`, `Data.Double`, clock,
+  concurrency) have no `C:` spec at all, so a C-name table was rejected.
+- **`%extern` prims:** `prim__codegen` → `"wolfram"`; others crash at run
+  time ("extern not implemented").
+- **`:exec` / `executeExpr`** not supported yet (throws with a hint).
+
+Semantics copied from chez (v0.8.0 `support.ss` / `Scheme/Common.idr`):
+`Neg` is **not** wrapped; `Mod` is never wrapped; casts String→Int parse a
+number and truncate, else 0; Int→Char yields 0 for invalid code points;
+`substr` clamps offset and length; string `<` compares code points.
+
 ### Primary reference: the in-tree JavaScript backend
 
 Closer to us than chez: dynamic, strict target with no tail-call guarantee,
@@ -131,7 +178,8 @@ wrappers to primitive element types.
 
 ## Build order
 
-1. **Hello world end to end.** Minimal codegen, smallest possible runtime,
+1. ✅ **Done 2026-10-21** — hello world plus 5 differential tests pass
+   (`scripts/test.sh`). **Hello world end to end.** Minimal codegen, smallest possible runtime,
    one `.idr` file that compiles to `.wl` and prints. This is the real
    go/no-go checkpoint — a couple of weekends, and it proves the whole chain.
    Hidden hurdle: `putStrLn` reaches output via the prelude's `%foreign`
@@ -181,9 +229,12 @@ data off heads with `Listable`/`Flat`/`Orderless` attributes.
 Never emit raw WL arithmetic. Idris's primitive ops (`PrimFn`: `Add`, `Sub`,
 `Mul`, `Div`, `Mod`, shifts, bitwise, comparisons, ~10 string ops, `Double`
 math, casts, `BelieveMe`, `Crash`) and primitive types (`Int`, `Int8`–`Int64`,
-`Bits8`–`Bits64`, `Integer`, `Double`, `Char`, `String`) are both finite. The
-codegen is a lookup table; definitions live in one runtime file
-(e.g. `Runtime/Prim.wl`).
+`Bits8`–`Bits64`, `Integer`, `Double`, `Char`, `String`) are both finite.
+Implemented as the `WolfdrisRT`op[...]` SubValues table in
+`support/wolfram/runtime.wl` (see Codegen design). Step 1 covers all
+integer arithmetic/comparisons, the 8 string ops and the int/Char/String
+casts; shifts, bitwise ops and `Double` math still hit the
+"not implemented" catch-all.
 
 Behavior below verified on WL 15.0.1 (cloud) and 15.1.0 (local).
 
@@ -296,19 +347,38 @@ Write the primitive edge-case programs first, one per primitive type:
 
 ## Toolchain
 
+All inside WSL, from the repo (`/mnt/c/localDocs/Repos/Wolfdris`):
+
 ```bash
-# self-hosting Idris 2 + api
-make install-api
+# one-time: Idris 2 v0.8.0 + compiler API (see Setup below)
+scripts/build-idris.sh
 
-# build the backend
-idris2 -p idris2 -p contrib -p network Wolfdris.idr -o wolfdris-idris2
+# build the backend -> build/exec/wolfdris
+scripts/build.sh
 
-# compile a program
-./wolfdris-idris2 --cg wolfram Foo.idr -o foo
+# compile a program -> build/exec/foo.wl (wrapper sets IDRIS2_DATA)
+scripts/wolfdris --cg wolfram Foo.idr -o foo
 
-# run it
-wolframscript -file foo.wl
+# run it (Windows wolframscript from WSL)
+"/mnt/c/Program Files/Wolfram Research/WolframScript/wolframscript.exe" -file "$(wslpath -w build/exec/foo.wl)"
+
+# differential tests vs chez: all of tests/*/Main.idr, or name some
+scripts/test.sh [name...]
 ```
+
+Test layout: `tests/<name>/Main.idr`; the script compiles with chez and
+Wolfdris, strips `\r`, diffs stdout. To add a test, add a directory.
+
+**Gotchas found while building step 1:**
+- The Idris driver **exits 0 when code generation fails** (type errors
+  do exit nonzero). Check that the output file exists; `test.sh` does.
+- `wolframscript` **merges the kernel's stderr into stdout**, so runtime
+  crash messages appear in stdout (and in test diffs). Exit codes pass
+  through (`Exit[3]` → 3).
+- `wolframscript` output uses CRLF line endings on Windows.
+- `-code` prints the final result (`Null`); `-file` doesn't.
+- From PowerShell 5.1, embedded `"` in native-exe arguments get stripped;
+  call `wolframscript.exe -code '...'` from bash instead.
 
 ### Setup (verified 2026-10-21)
 

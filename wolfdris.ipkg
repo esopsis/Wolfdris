@@ -1,0 +1,15 @@
+package wolfdris
+version = 0.1.0
+brief = "Idris 2 with a Wolfram Language backend"
+
+sourcedir = "src"
+depends = idris2, contrib, network
+
+modules = Main
+        , Wolfdris.Codegen
+        , Wolfdris.Emit
+        , Wolfdris.Foreign
+        , Wolfdris.Mangle
+
+main = Main
+executable = wolfdris

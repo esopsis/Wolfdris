@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Run the Wolfdris compiler with the repo's runtime on the data path.
+# Usage: scripts/wolfdris --cg wolfram Foo.idr -o foo   (writes build/exec/foo.wl)
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+export IDRIS2_DATA="$repo/support${IDRIS2_DATA:+:$IDRIS2_DATA}"
+exec "$repo/build/exec/wolfdris" "$@"
