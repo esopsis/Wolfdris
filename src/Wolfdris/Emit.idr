@@ -95,6 +95,22 @@ tagLit : Name -> Maybe Int -> String
 tagLit _ (Just t) = show t
 tagLit n Nothing = wlString (nameStr n)
 
+||| %extern primitives, by unqualified name, with their arguments already
+||| emitted. Type arguments (erased) and world tokens are dropped where the
+||| runtime doesn't need them; argument shapes follow the JS backend's jsPrim.
+extPrim : String -> List String -> Maybe String
+extPrim "prim__codegen" [] = Just (wlString "wolfram")
+extPrim "prim__os" [] = Just (rt "osName[]")
+extPrim "prim__newIORef" [_, v, _] = Just (rt "newIORef[" ++ v ++ "]")
+extPrim "prim__readIORef" [_, r, _] = Just (rt "readIORef[" ++ r ++ "]")
+extPrim "prim__writeIORef" [_, r, v, _] = Just (rt "writeIORef[" ++ r ++ ", " ++ v ++ "]")
+extPrim "prim__newArray" [_, s, v, _] = Just (rt "newArray[" ++ s ++ ", " ++ v ++ "]")
+extPrim "prim__arrayGet" [_, a, i, _] = Just (rt "arrayGet[" ++ a ++ ", " ++ i ++ "]")
+extPrim "prim__arraySet" [_, a, i, v, _]
+    = Just (rt "arraySet[" ++ a ++ ", " ++ i ++ ", " ++ v ++ "]")
+extPrim "prim__getChar" [w] = Just (rt "getChar[" ++ w ++ "]")
+extPrim _ _ = Nothing
+
 mutual
   export
   emit : {auto f : Ref Fresh Int} -> NamedCExp -> Core String
@@ -120,9 +136,10 @@ mutual
       = pure $ rt "op[" ++ commas (map wlString (opKeys op)) ++ "]["
                ++ commas !(traverse emit (toList args)) ++ "]"
   emit (NmExtPrim _ p args)
-      = if dropAllNS p == UN (Basic "prim__codegen")
-           then pure (wlString "wolfram")
-           else pure $ rt "crash[" ++ wlString ("extern not implemented: " ++ nameStr p) ++ "]"
+      = do args' <- traverse emit args
+           pure $ fromMaybe
+             (rt "crash[" ++ wlString ("extern not implemented: " ++ nameStr p) ++ "]")
+             (extPrim (nameStr (dropAllNS p)) args')
   emit (NmForce _ _ e) = pure $ !(emit e) ++ "[]"
   emit (NmDelay _ _ e) = pure $ "Function[{}, " ++ !(emit e) ++ "]"
   emit (NmConCase _ sc alts def)
@@ -168,8 +185,12 @@ isWorld _ = False
 
 emitForeign : FC -> Name -> List String -> List CFType -> Core String
 emitForeign fc n specs fargs
-    = do let xs = map (\i => genContext ++ "x" ++ show i) [1 .. length fargs]
-             lhs = globalSym n ++ "[" ++ commas (map (++ "_") xs) ++ "] := "
+    = do -- Zip with fargs: [1 .. 0] is [1, 0] in Idris, not [].
+         let xs = zipWith (\i, _ => genContext ++ "x" ++ show i) [1 .. length fargs] fargs
+             -- Zero-arity definitions are referenced without [], see emit.
+             lhs = if null fargs
+                      then globalSym n ++ " := "
+                      else globalSym n ++ "[" ++ commas (map (++ "_") xs) ++ "] := "
          case lookupForeign n of
               Just impl => pure $ lhs ++ impl ++ "[" ++ commas xs ++ "]"
               Nothing => case wolframSpec specs of

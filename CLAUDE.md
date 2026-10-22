@@ -108,8 +108,17 @@ Code: `src/Wolfdris/{Codegen,Emit,Mangle,Foreign}.idr`, runtime
   map names — it really calls the C library — and several Prelude
   foreigns (`fastPack`/`fastUnpack`/`fastConcat`, `Data.Double`, clock,
   concurrency) have no `C:` spec at all, so a C-name table was rejected.
-- **`%extern` prims:** `prim__codegen` → `"wolfram"`; others crash at run
-  time ("extern not implemented").
+- **`%extern` prims** (`extPrim` in `Emit.idr`, arg shapes from JS's
+  `jsPrim`): `prim__codegen` → `"wolfram"`, `prim__os`, IORefs, arrays,
+  `prim__getChar`; others crash at run time ("extern not implemented").
+  IORefs/arrays are inert handles `Ref[id]`/`Arr[id]` into runtime-owned
+  associations (never freed).
+- **stdin:** `wolframscript` gives `-file` scripts no stdin stream
+  (`"stdin"` can't be opened, `InputString[]` returns `EndOfFile`); all of
+  stdin arrives **up front** in `$ScriptInputString`, as raw UTF-8 bytes
+  one per character. The runtime decodes it once and reads lines/chars from
+  that buffer. Consequence: piped input works, **interactive
+  prompt-then-read programs don't**.
 - **`:exec` / `executeExpr`** not supported yet (throws with a hint).
 
 Semantics copied from chez (v0.8.0 `support.ss` / `Scheme/Common.idr`):
@@ -172,6 +181,9 @@ wrappers to primitive element types.
   proof.
 - **No signed zero.** WL has no `-0.0` (`Sign[-0.]` is `0`). Accepted
   divergence from IEEE.
+- **No interactive stdin** under `wolframscript -file` (see stdin above).
+- **Transcendental functions use WL's implementations**, chez uses C libm;
+  they agreed on everything tested, but last-ulp differences are possible.
 - **Slow.** Generated code will be far slower than chez — WL function-call
   overhead on every small Idris function. Fine: Idris orchestrates, heavy
   compute happens inside WL library calls. Don't optimize early.
@@ -189,6 +201,10 @@ wrappers to primitive element types.
    functions, as chez does, or attach `wolfram:` specs with `%foreign_impl`.
    API facts for this step: [docs/idris-backend-api.md](docs/idris-backend-api.md).
 2. **Runtime library in WL.** The bulk of the work (see below).
+   **Progress 2026-10-22:** all primitives, `Double` with IEEE semantics,
+   stdin, IORefs/arrays done; 8/8 differential tests pass. Still to do:
+   adopt Idris's own test suite as a conformance suite (plan mode first),
+   and whatever foreigns it surfaces (files, clock, args, system…).
 3. **FFI + first wrappers.** Marshalling both directions; `Total`, `Map`,
    `Select`, `Length`, `Sort`.
 4. **Tail call handling.** See risks.
@@ -231,10 +247,11 @@ Never emit raw WL arithmetic. Idris's primitive ops (`PrimFn`: `Add`, `Sub`,
 math, casts, `BelieveMe`, `Crash`) and primitive types (`Int`, `Int8`–`Int64`,
 `Bits8`–`Bits64`, `Integer`, `Double`, `Char`, `String`) are both finite.
 Implemented as the `WolfdrisRT`op[...]` SubValues table in
-`support/wolfram/runtime.wl` (see Codegen design). Step 1 covers all
-integer arithmetic/comparisons, the 8 string ops and the int/Char/String
-casts; shifts, bitwise ops and `Double` math still hit the
-"not implemented" catch-all.
+`support/wolfram/runtime.wl` (see Codegen design). **All `PrimFn`s are
+implemented as of step 2** (2026-10-22): integer arithmetic, comparisons,
+shifts and bitwise ops; the 8 string ops; `Double` arithmetic, comparisons
+and math; all casts. Shifts/bitwise follow chez: `ShiftL` wraps for
+bounded types, `ShiftR` is arithmetic, `BAnd`/`BOr`/`BXOr` never wrap.
 
 Behavior below verified on WL 15.0.1 (cloud) and 15.1.0 (local).
 
@@ -266,12 +283,36 @@ Behavior below verified on WL 15.0.1 (cloud) and 15.1.0 (local).
   | `log(0.0)` | `-Infinity` | `Indeterminate` |
   | `-0.0` | signed zero | `0` |
 
-  Plan: ordinary doubles stay WL machine reals; specials are runtime symbols
-  (`dInf`, `dNegInf`, `dNaN`). Each `Double` primitive goes through a shared
-  guard: handle special inputs, compute under `Quiet`, map any non-machine-real
-  result (bignum, complex, `ComplexInfinity`, `Indeterminate`) to the right
-  symbol. `show` for Double is hand-written — WL `InputForm` gives `1.*^21`
-  where Idris prints `1e21`-style.
+  **As built (step 2), byte-identical to chez in `tests/doubles`:**
+  - A Double is a WL machine real, or WL's own `Infinity`, `-Infinity`,
+    `Indeterminate` (NaN) — not invented symbols: WL's symbolic arithmetic
+    then gets ∞−∞, ∞·0, 1/∞, NaN propagation right for free.
+  - Every result goes through `toDouble`; special inputs to math functions
+    and all `pow` special cases (C99 rules) are handled explicitly.
+  - Comparisons use **exact** values (`SetPrecision[x, Infinity]`): WL's
+    `==` and `<` on machine reals have a tolerance (`0.1+0.2 == 0.3` is
+    `True` in WL).
+  - `pow` computes at 40 digits and rounds.
+  - `show` (= chez `number->string`): shortest digits that round-trip;
+    plain notation iff 1e-3 ≤ |x| < 1e10, else `d.ddde<n>` (`1e10`,
+    `1.2e-4`); subnormals get chez's `|<bits>` suffix (`5e-324|1`);
+    specials print `+inf.0`, `-inf.0`, `+nan.0`. Matched chez on 6000
+    random bit patterns.
+  - Double literals are emitted as `digits`*^exp` (backtick = machine
+    precision), from the compiler's own `show`.
+
+  **WL numeric pitfalls found (all confirmed on 15.1.0):**
+  - **`N[rational]` is not correctly rounded** — it disagreed with chez's
+    `exact->inexact` on 558/3000 random rationals (e.g. `N[10^-23]`). Use
+    `fromExact` (exact ties-to-even via `BitLength`/`Round`, built as
+    `(m 2^-52) * 2.^e2`) for every rational → Double conversion.
+  - **`ImportByteArray[..., "Real64"]` gets every subnormal wrong** (the
+    smallest comes back as `0``323.3`, not a machine number). Subnormals
+    are built with `SetPrecision[k 2^-1074, MachinePrecision]` instead.
+  - **`2.^1024.` returns a finite value** (`1.7976931348622732*^308`), not
+    an overflow — hence `pow` at extended precision.
+  - `SetPrecision` to subnormals emits `General::munfl` to stdout; wrap
+    numeric conversions in `Quiet`.
 - **String/Char: mostly free.** WL strings are Unicode code points like
   Idris's (`StringLength["aα☃"]` is 3). String primitives map to `StringTake`,
   `StringJoin`, `StringReverse` etc. with bounds checks. `Char` is an integer
@@ -366,8 +407,12 @@ scripts/wolfdris --cg wolfram Foo.idr -o foo
 scripts/test.sh [name...]
 ```
 
-Test layout: `tests/<name>/Main.idr`; the script compiles with chez and
+Test layout: `tests/<name>/Main.idr`, plus an optional `tests/<name>/input`
+piped to both programs as stdin; the script compiles with chez and
 Wolfdris, strips `\r`, diffs stdout. To add a test, add a directory.
+Idris test-writing gotchas: float literals need a `.` (`1.0e9`, not `1e9`);
+unannotated literals default to `Integer`; long tuples of overloaded
+literals hit the ambiguity-depth limit — use typed lists.
 
 **Gotchas found while building step 1:**
 - The Idris driver **exits 0 when code generation fails** (type errors

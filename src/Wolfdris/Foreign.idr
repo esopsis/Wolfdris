@@ -18,9 +18,14 @@ foreignTable =
   [ ("Prelude.IO.prim__putStr", "putStr")
   , ("Prelude.IO.prim__putChar", "putChar")
   , ("Prelude.IO.prim__getStr", "getStr")
+  , ("Prelude.IO.prim__getChar", "getChar")
   , ("Prelude.Types.fastPack", "fastPack")
   , ("Prelude.Types.fastUnpack", "fastUnpack")
   , ("Prelude.Types.fastConcat", "fastConcat")
+  , ("Data.Double.nan", "doubleNaN")
+  , ("Data.Double.inf", "doubleInf")
+  , ("Data.Double.epsilon", "doubleEpsilon")
+  , ("Data.Double.unitRoundoff", "doubleUnitRoundoff")
   ]
 
 export

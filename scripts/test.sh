@@ -20,7 +20,9 @@ for name in "${names[@]}"; do
     echo "FAIL $name (chez compile)"; cat build_chez.log
     fail=$((fail+1)); failed+=("$name"); continue
   fi
-  ./build/exec/chez_main > expected.out 2>&1
+  # Optional tests/<name>/input is piped to both programs as stdin.
+  input=/dev/null; [ -f input ] && input=input
+  ./build/exec/chez_main < "$input" > expected.out 2>&1
   # The Idris driver exits 0 when code generation fails, so also check
   # that the output file exists.
   if ! "$repo/scripts/wolfdris" --cg wolfram Main.idr -o main > build_wl.log 2>&1 \
@@ -28,7 +30,7 @@ for name in "${names[@]}"; do
     echo "FAIL $name (wolfdris compile)"; cat build_wl.log
     fail=$((fail+1)); failed+=("$name"); continue
   fi
-  "$WS" -file "$(wslpath -w build/exec/main.wl)" 2>&1 | tr -d '\r' > actual.out
+  "$WS" -file "$(wslpath -w build/exec/main.wl)" < "$input" 2>&1 | tr -d '\r' > actual.out
   if diff -u expected.out actual.out > diff.out; then
     echo "PASS $name"; pass=$((pass+1))
   else

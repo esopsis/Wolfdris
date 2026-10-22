@@ -93,17 +93,20 @@ wlString s = "\"" ++ concatMap esc (unpack s) ++ "\""
             else if n <= 0xFFFF then "\\:" ++ padHex 4 n
             else "\\|" ++ padHex 6 n
 
-||| A WL machine-real literal from an Idris Double (finite values).
+||| A WL literal for an Idris Double. Finite values become machine-real
+||| literals: `show` (chez's shortest round-trip digits, e.g. "1.5e-7" or
+||| "5e-324|1") with a backtick so WL never reads them as arbitrary
+||| precision. NaN and the infinities use WL's own values, as the runtime does.
 export
 wlDouble : Double -> String
 wlDouble d =
-  if d /= d then rt "dNaN"
-  else if d == 1.0 / 0.0 then rt "dInf"
-  else if d == -1.0 / 0.0 then rt "dNegInf"
+  if d /= d then "Indeterminate"
+  else if d == 1.0 / 0.0 then "Infinity"
+  else if d == -1.0 / 0.0 then "DirectedInfinity[-1]"
   else
-    let s = show d
+    let s = fst (break (== '|') (show d))
         (mant, ex) = break (== 'e') s
-        mant' = if isInfixOf "." mant then mant else mant ++ ".0"
+        mant' = if isInfixOf "." mant then mant else mant ++ "."
     in case strM ex of
-            StrNil => mant'
-            StrCons _ rest => mant' ++ "*^" ++ rest
+            StrNil => mant' ++ "`"
+            StrCons _ rest => mant' ++ "`*^" ++ rest

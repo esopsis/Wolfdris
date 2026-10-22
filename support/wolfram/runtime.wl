@@ -52,6 +52,16 @@ Do[With[{t = t, w = wrap[t]},
     op["Div", t][a_, b_] := If[b == 0, divByZero[], w[euclidDiv[a, b]]]],
   {t, Join[{"Integer"}, Keys[signedBits]]}];
 
+(* chez: ShiftL wraps for bounded types; ShiftR is an arithmetic shift and
+   the bitwise ops act on the (two's complement) value, none of them wrap. *)
+Do[With[{t = t, w = wrap[t]},
+    op["ShiftL", t][a_, b_] := w[BitShiftLeft[a, b]];
+    op["ShiftR", t][a_, b_] := BitShiftRight[a, b];
+    op["BAnd", t][a_, b_] := BitAnd[a, b];
+    op["BOr", t][a_, b_] := BitOr[a, b];
+    op["BXOr", t][a_, b_] := BitXor[a, b]],
+  {t, intTypes}];
+
 Do[With[{t = t},
     op["Div", t][a_, b_] := If[b == 0, divByZero[], Quotient[a, b]]],
   {t, Keys[unsignedBits]}];
@@ -63,7 +73,7 @@ Do[With[{t = t},
     op["EQ", t][a_, b_] := Boole[a == b];
     op["GTE", t][a_, b_] := Boole[a >= b];
     op["GT", t][a_, b_] := Boole[a > b]],
-  {t, Join[intTypes, {"Char", "Double"}]}];
+  {t, Join[intTypes, {"Char"}]}];
 
 (* Strings compare by code point, like chez's string<? *)
 strCmp[a_String, b_String] := Module[{x = ToCharacterCode[a], y = ToCharacterCode[b], i},
@@ -94,12 +104,20 @@ op["StrSubstr"][off_, len_, s_] := With[{l = StringLength[s], b = Max[0, off]},
 (* ---- Casts ---- *)
 intString[x_Integer] := If[x < 0, "-" <> IntegerString[-x], IntegerString[x]];
 
+(* The exact rational value of a decimal string like "-12.5e-3", or None
+   if it isn't one. *)
+decimalRegex = RegularExpression["([+-]?)([0-9]*)\\.?([0-9]*)(?:[eE]([+-]?[0-9]+))?"];
+exactDecimal[s_String] := If[
+  !StringMatchQ[s, decimalRegex] || !StringContainsQ[s, DigitCharacter] ||
+    StringMatchQ[s, RegularExpression["[+-]?\\.?[eE].*"]],
+  None,
+  First[StringCases[s, decimalRegex :>
+    If["$1" === "-", -1, 1] *
+      FromDigits["$2" <> "$3"] / 10^StringLength["$3"] *
+      10^If["$4" === "", 0, ToExpression["$4"]]]]];
+
 (* chez cast-string-int: parse a number (truncated), 0 if it isn't one. *)
-parseNumber[s_String] := Which[
-  StringMatchQ[s, RegularExpression["[+-]?[0-9]+"]], ToExpression[s],
-  StringMatchQ[s, RegularExpression["[+-]?([0-9]+\\.?[0-9]*|\\.[0-9]+)([eE][+-]?[0-9]+)?"]],
-    ToExpression[StringReplace[s, {"e" -> "*^", "E" -> "*^"}]],
-  True, 0];
+parseNumber[s_String] := Replace[exactDecimal[s], None -> 0];
 
 validChar[c_] := 0 <= c <= 16^^d7ff || 16^^e000 <= c <= 16^^10ffff;
 
@@ -112,16 +130,144 @@ Do[With[{t = t, w = wrap[t]},
     op["Cast", "String", t][s_] := w[IntegerPart[parseNumber[s]]];
     op["Cast", "Char", t][c_] := w[c];
     op["Cast", t, "Char"][x_] := If[validChar[x], x, 0];
-    op["Cast", t, "Double"][x_] := N[x];
-    op["Cast", "Double", t][x_] := w[IntegerPart[x]]],
+    op["Cast", t, "Double"][x_] := toDouble[x];
+    op["Cast", "Double", t][x_] := If[nanQ[x] || infQ[x],
+      crash["cast: Double is not finite"], w[IntegerPart[ex[x]]]]],
   {t, intTypes}];
 
 op["Cast", "Char", "String"][c_] := FromCharacterCode[c];
 
 (* ---- Double ---- *)
-(* Step 1: IEEE special values are inert symbols; Double ops other than the
-   comparisons and int casts fall through to "not implemented". *)
-dNaN; dInf; dNegInf;
+(* A Double is a machine real, or Infinity, -Infinity, or Indeterminate for
+   NaN. WL doesn't do IEEE overflow, NaN or rounding on its own (e.g.
+   1.*^308 * 10. is a bignum, 2.^1024. comes out finite), so every result
+   goes through toDouble. Comparisons use exact values: WL's Equal and Less
+   have a tolerance for machine reals. There is no signed zero. *)
+nanQ[x_] := x === Indeterminate;
+infQ[x_] := x === Infinity || x === -Infinity;
+ex[x_Real] := SetPrecision[x, Infinity];
+ex[x_] := x;
+
+(* Exact rational -> nearest double, ties to even. Don't use N[r]: it is not
+   correctly rounded (it disagreed with chez's exact->inexact on 558 of 3000
+   random rationals; this agreed on all). Normal results are built as
+   (m 2^-52) * 2^e2, which is exact in machine arithmetic. Subnormals use
+   SetPrecision of the exactly representable value, which was bit-exact for
+   all 2022 tested; ImportByteArray gets every subnormal wrong. *)
+fromExact[r_] := Module[{a = Abs[r], e2, m},
+  Which[
+    a == 0, 0.,
+    (* k == 2^52 correctly rolls into the smallest normal *)
+    a < 2^-1022, Sign[r] Quiet[SetPrecision[Round[a 2^1074] 2^-1074, MachinePrecision]],
+    True,
+      (* e2 = Floor[Log2[a]], from bit lengths (exact Log is slow) *)
+      e2 = BitLength[Numerator[a]] - BitLength[Denominator[a]];
+      If[a < 2^e2, e2--];
+      m = Round[a 2^(52 - e2)];
+      If[m == 2^53, m = 2^52; e2++];
+      If[e2 + 1023 >= 2047, Sign[r] Infinity,
+        Sign[r] (N[m] * 2.^-52) * 2.^e2]]];
+
+toDouble[r_] := Which[
+  Head[r] === Real && MachineNumberQ[r], r,
+  infQ[r] || nanQ[r], r,
+  MatchQ[r, _Integer | _Rational], fromExact[r],
+  Head[r] === Real, fromExact[SetPrecision[r, Infinity]],
+  Head[r] === Overflow, Infinity,
+  Head[r] === Underflow, 0.,
+  True, Indeterminate];  (* ComplexInfinity, Complex, other directions *)
+
+op["Add", "Double"][a_, b_] := toDouble[Quiet[a + b]];
+op["Sub", "Double"][a_, b_] := toDouble[Quiet[a - b]];
+op["Mul", "Double"][a_, b_] := toDouble[Quiet[a b]];
+op["Div", "Double"][a_, b_] := Which[
+  nanQ[a] || nanQ[b], Indeterminate,
+  ex[b] == 0, If[ex[a] == 0, Indeterminate, Sign[a] Infinity],
+  True, toDouble[Quiet[a / b]]];
+op["Neg", "Double"][a_] := toDouble[-a];
+
+Do[With[{o = First[p], f = Last[p]},
+    op[o, "Double"][a_, b_] := If[nanQ[a] || nanQ[b], 0, Boole[f[ex[a], ex[b]]]]],
+  {p, {{"LT", Less}, {"LTE", LessEqual}, {"EQ", Equal}, {"GTE", GreaterEqual}, {"GT", Greater}}}];
+
+(* Unary math: IEEE results for special inputs, then compute and convert. *)
+op["DoubleExp"][a_] := Which[nanQ[a] || a === Infinity, a, a === -Infinity, 0.,
+  True, toDouble[Quiet[Exp[a]]]];
+op["DoubleLog"][a_] := Which[nanQ[a] || a === Infinity, a, a === -Infinity, Indeterminate,
+  ex[a] < 0, Indeterminate, ex[a] == 0, -Infinity, True, toDouble[Quiet[Log[a]]]];
+op["DoubleSqrt"][a_] := Which[nanQ[a] || a === Infinity, a, a === -Infinity, Indeterminate,
+  ex[a] < 0, Indeterminate, True, toDouble[Quiet[Sqrt[a]]]];
+Do[With[{o = First[p], f = Last[p]},
+    op[o][a_] := If[nanQ[a] || infQ[a], Indeterminate, toDouble[Quiet[f[a]]]]],
+  {p, {{"DoubleSin", Sin}, {"DoubleCos", Cos}, {"DoubleTan", Tan}}}];
+Do[With[{o = First[p], f = Last[p]},
+    op[o][a_] := If[nanQ[a] || infQ[a] || Abs[ex[a]] > 1, Indeterminate,
+      toDouble[Quiet[f[a]]]]],
+  {p, {{"DoubleASin", ArcSin}, {"DoubleACos", ArcCos}}}];
+op["DoubleATan"][a_] := Which[nanQ[a], a, a === Infinity, N[Pi/2], a === -Infinity, -N[Pi/2],
+  True, toDouble[Quiet[ArcTan[a]]]];
+op["DoubleFloor"][a_] := If[nanQ[a] || infQ[a], a, toDouble[Floor[ex[a]]]];
+op["DoubleCeiling"][a_] := If[nanQ[a] || infQ[a], a, toDouble[Ceiling[ex[a]]]];
+
+(* pow, following the C99/IEEE special cases. Finite results are computed
+   at 40 digits and rounded: machine Power gets overflow wrong. *)
+intValuedQ[x_] := Head[x] === Real && FractionalPart[ex[x]] == 0;
+op["DoublePow"][a_, b_] := Which[
+  !nanQ[b] && ex[b] == 0, 1.,
+  !nanQ[a] && ex[a] == 1, 1.,
+  nanQ[a] || nanQ[b], Indeterminate,
+  b === Infinity, Which[Abs[ex[a]] > 1, Infinity, Abs[ex[a]] < 1, 0., True, 1.],
+  b === -Infinity, Which[Abs[ex[a]] < 1, Infinity, Abs[ex[a]] > 1, 0., True, 1.],
+  a === Infinity, If[ex[b] < 0, 0., Infinity],
+  a === -Infinity, Which[ex[b] < 0, 0., intValuedQ[b] && OddQ[Round[ex[b]]], -Infinity,
+    True, Infinity],
+  ex[a] == 0, If[ex[b] < 0, Infinity, 0.],
+  intValuedQ[b], toDouble[Quiet[SetPrecision[a, 40]^Round[ex[b]]]],
+  ex[a] < 0, Indeterminate,
+  True, toDouble[Quiet[SetPrecision[a, 40]^SetPrecision[b, 40]]]];
+
+(* chez number->string for flonums: the shortest digits that round-trip;
+   plain notation when 1e-3 <= |x| < 1e10, otherwise d.ddde<n>;
+   subnormals get chez's "|<bits of precision>" suffix. *)
+showDouble[x_] := Which[
+  x === Infinity, "+inf.0",
+  x === -Infinity, "-inf.0",
+  nanQ[x], "+nan.0",
+  ex[x] == 0, "0.0",
+  True, If[ex[x] < 0, "-", ""] <> showPositive[Abs[ex[x]]]];
+
+showPositive[a_] := Module[{e, n = 1, m, ds, k, ee, d, s},
+  e = RealDigits[a, 10, 1][[2]];  (* a = 0.d... * 10^e *)
+  While[n < 17 && ex[fromExact[Round[a 10^(n - e)] 10^(e - n)]] != a, n++];
+  m = Round[a 10^(n - e)];
+  ds = IntegerDigits[m];
+  ee = Length[ds] + e - n;        (* now a ~ 0.ds * 10^ee *)
+  ds = Drop[ds, -LengthWhile[Reverse[ds], # == 0 &]];
+  k = Length[ds];
+  d = StringJoin[ToString /@ ds];
+  s = Which[
+    -2 <= ee <= 0, "0." <> StringRepeat["0", -ee] <> d,
+    1 <= ee <= 10 && ee >= k, d <> StringRepeat["0", ee - k] <> ".0",
+    1 <= ee <= 10, StringTake[d, ee] <> "." <> StringDrop[d, ee],
+    True, StringTake[d, 1] <> If[k > 1, "." <> StringDrop[d, 1], ""] <>
+      "e" <> intString[ee - 1]];
+  If[a < 2^-1022, s <> "|" <> ToString[BitLength[a 2^1074]], s]];
+
+(* chez cast-string-double *)
+parseDouble[s_String] := Switch[s,
+  "+inf.0", Infinity,
+  "-inf.0", -Infinity,
+  "+nan.0" | "-nan.0", Indeterminate,
+  _, Replace[exactDecimal[s], {None -> 0., r_ :> toDouble[r]}]];
+
+op["Cast", "Double", "String"][x_] := showDouble[x];
+op["Cast", "String", "Double"][s_] := parseDouble[s];
+
+(* Data.Double constants (zero-argument foreigns) *)
+doubleNaN[] := Indeterminate;
+doubleInf[] := Infinity;
+doubleEpsilon[] := $MachineEpsilon;
+doubleUnitRoundoff[] := $MachineEpsilon/2;
 
 (* ---- Anything else ---- *)
 op[keys__][___] := crash["not implemented: " <> StringRiffle[{keys}, " "]];
@@ -129,7 +275,44 @@ op[keys__][___] := crash["not implemented: " <> StringRiffle[{keys}, " "]];
 (* ---- Foreign functions (see src/Wolfdris/Foreign.idr) ---- *)
 putStr[s_, _] := (WriteString[$Output, s]; unit);
 putChar[c_, _] := (WriteString[$Output, FromCharacterCode[c]]; unit);
-getStr[_] := crash["getLine is not implemented yet"];
+
+(* wolframscript gives -file scripts no readable stdin stream: all of stdin
+   arrives up front in $ScriptInputString. So input is read from a buffer,
+   and interactive (prompt-then-read) programs aren't possible. *)
+(* It holds the raw UTF-8 bytes, one per character, so decode it. *)
+stdinBuf := stdinBuf = If[StringQ[$ScriptInputString],
+  With[{bytes = ToCharacterCode[$ScriptInputString]},
+    If[bytes === {} || Max[bytes] < 256,
+      Quiet[FromCharacterCode[bytes, "UTF-8"]], $ScriptInputString]],
+  ""];
+stdinPos = 1;
+(* idris2_getStr: the next line without its "\n"; "" at end of input *)
+getStr[_] := Module[{rest, nl},
+  If[stdinPos > StringLength[stdinBuf], "",
+    rest = StringDrop[stdinBuf, stdinPos - 1];
+    nl = StringPosition[rest, "\n", 1];
+    If[nl === {},
+      stdinPos = StringLength[stdinBuf] + 1; rest,
+      stdinPos += nl[[1, 1]]; StringTake[rest, nl[[1, 1]] - 1]]]];
+getChar[_] := If[stdinPos > StringLength[stdinBuf], 0,
+  With[{c = First[ToCharacterCode[StringTake[stdinBuf, {stdinPos}]]]}, stdinPos++; c]];
+
+(* %extern primitives (see extPrim in src/Wolfdris/Emit.idr). IORefs and
+   arrays are handles into runtime-owned associations; nothing is freed. *)
+refs = <||>; refCount = 0;
+newIORef[v_] := (refCount++; refs[refCount] = v; Ref[refCount]);
+readIORef[Ref[i_]] := refs[i];
+writeIORef[Ref[i_], v_] := (refs[i] = v; unit);
+
+arrays = <||>; arrCount = 0;
+newArray[n_, v_] := (arrCount++; arrays[arrCount] = ConstantArray[v, Max[n, 0]]; Arr[arrCount]);
+arrayGet[Arr[i_], k_] := If[0 <= k < Length[arrays[i]], arrays[i][[k + 1]],
+  crash["arrayGet: index out of bounds"]];
+arraySet[Arr[i_], k_, v_] := If[0 <= k < Length[arrays[i]],
+  arrays[[Key[i], k + 1]] = v; unit,
+  crash["arraySet: index out of bounds"]];
+
+osName[] := Switch[$OperatingSystem, "Windows", "windows", "MacOSX", "darwin", _, "unix"];
 
 (* Idris List <-> WL list, iteratively so long lists don't hit the
    recursion limit. Nil is Con[0], cons is Con[1, head, tail]. *)
