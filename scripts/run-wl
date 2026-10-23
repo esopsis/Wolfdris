@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Run a generated .wl file: run-wl FILE.wl [args...]
+# Windows wolframscript.exe (used from WSL) needs a Windows path.
+# WOLFDRIS_TIMEOUT (seconds), if set, kills runs that take longer.
+WS=${WOLFRAMSCRIPT:-"/mnt/c/Program Files/Wolfram Research/WolframScript/wolframscript.exe"}
+file=$1; shift
+case "$WS" in
+  *.exe) path=$(wslpath -w "$file") ;;
+  *)     path=$file ;;
+esac
+# wolframscript silently drops script arguments that start with "-" (and
+# everything after them), so pass the arguments in an environment variable:
+# base64 of the NUL-terminated UTF-8 strings. WSLENV forwards it to Windows.
+export WOLFDRIS_ARGS=$(printf '%s\0' "$@" | base64 -w0)
+[ $# -eq 0 ] && WOLFDRIS_ARGS=-
+export WSLENV="WOLFDRIS_ARGS${WSLENV:+:$WSLENV}"
+if [ -n "${WOLFDRIS_TIMEOUT:-}" ]; then
+  exec timeout -k 10 "$WOLFDRIS_TIMEOUT" "$WS" -file "$path"
+else
+  exec "$WS" -file "$path"
+fi

@@ -1,0 +1,9 @@
+package wolfdris-conformance
+
+sourcedir = "."
+depends = test, contrib
+
+modules = Runner
+
+main = Runner
+executable = runtests

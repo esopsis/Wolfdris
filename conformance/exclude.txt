@@ -1,0 +1,42 @@
+# Idris 2 tests left out of the conformance suite on purpose, with reasons.
+# One test path (relative to Idris2/tests) per line; '#' starts a comment.
+# scripts/conformance.sh also drops, automatically:
+#   - tests whose run script contains --cg (they force chez/node);
+#   - tests that never run a program (type checking / REPL evaluation only);
+#   - tests shipping C/Scheme/Racket sources or reading generated chez code;
+#   - tests importing threads, network or signal modules.
+
+# C FFI (callbacks, structs, allocation)
+chez/chez010
+chez/chez013
+chez/chez022
+chez/chez030
+chez/chez031
+allschemes/ffi001
+
+# Network
+chez/chez014
+
+# Inspect chez's generated Scheme code (build/exec/*_app/*.ss) or chez files
+chez/constfold
+chez/constfold2
+chez/constfold3
+chez/inlineiobind
+chez/nat2fin
+chez/chez035
+# Expects chez's own internal error text
+chez/chez037
+
+# Scheme-only features
+allschemes/memo003   # %cg chez lazy=weakMemo directive
+allschemes/memo004   # %cg chez lazy=weakMemo directive
+allschemes/memo005   # scheme `collect` (GC) foreign
+
+# Threads (fork)
+chez/chez023
+
+# Behaviour we deliberately don't match (see CLAUDE.md "Known limits")
+allbackends/evaluator005   # prints -0.0; WL has no signed zero
+base/system_info001        # compares with WSL nproc; Windows kernel counts differently
+base/system_info_os001     # expects "unix" (WSL); the kernel really runs on Windows
+chez/chez017               # prints currentDir; ours is a Windows path, not the WSL one

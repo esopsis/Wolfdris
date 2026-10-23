@@ -155,7 +155,8 @@ mutual
            pure $ "Switch[" ++ sc' ++ ", " ++ commas (alts' ++ ["_, " ++ def']) ++ "]"
   emit (NmPrimVal _ c) = pure (constant c)
   emit (NmErased _) = pure (rt "erased")
-  emit (NmCrash _ msg) = pure $ rt "crash[" ++ wlString msg ++ "]"
+  -- Compiler-generated crash: chez prints the bare message (no "ERROR: ").
+  emit (NmCrash _ msg) = pure $ rt "crashRaw[" ++ wlString msg ++ "]"
 
   ||| A local scrutinee is used directly; anything else is bound once.
   scrutinee : {auto f : Ref Fresh Int} -> NamedCExp -> Core (Maybe String, String)
@@ -177,7 +178,7 @@ mutual
 
   defaultBranch : {auto f : Ref Fresh Int} -> Maybe NamedCExp -> Core String
   defaultBranch (Just d) = emit d
-  defaultBranch Nothing = pure $ rt "crash[" ++ wlString "unmatched case" ++ "]"
+  defaultBranch Nothing = pure $ rt "crashRaw[" ++ wlString "unmatched case" ++ "]"
 
 isWorld : CFType -> Bool
 isWorld CFWorld = True
@@ -203,6 +204,12 @@ emitForeign fc n specs fargs
 ||| One top-level definition. Constructors need no code.
 export
 emitDef : {auto f : Ref Fresh Int} -> (Name, FC, NamedDef) -> Core String
+-- A top-level Lazy constant: memoise its forced value, as chez's
+-- (define f (delay ...)) does, so forcing it twice doesn't recompute.
+emitDef (n, _, MkNmFun [] (NmDelay _ _ body))
+    = let val = globalSym n ++ "$lazy" in
+      pure $ val ++ " := " ++ val ++ " = " ++ !(emit body) ++ ";\n"
+             ++ globalSym n ++ " := " ++ globalSym n ++ " = Function[{}, " ++ val ++ "];"
 emitDef (n, _, MkNmFun [] body)
     = pure $ globalSym n ++ " := " ++ globalSym n ++ " = " ++ !(emit body) ++ ";"
 emitDef (n, _, MkNmFun args body)
@@ -210,4 +217,5 @@ emitDef (n, _, MkNmFun args body)
              ++ "] := " ++ !(emit body) ++ ";"
 emitDef (n, _, MkNmCon _ _ _) = pure ""
 emitDef (n, fc, MkNmForeign specs fargs _) = pure $ !(emitForeign fc n specs fargs) ++ ";"
-emitDef (n, _, MkNmError e) = pure $ globalSym n ++ "[___] := " ++ !(emit e) ++ ";"
+-- Fails when used, whether referenced bare (zero arity) or applied.
+emitDef (n, _, MkNmError e) = pure $ globalSym n ++ " := " ++ !(emit e) ++ ";"

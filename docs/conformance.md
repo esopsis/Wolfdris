@@ -1,0 +1,62 @@
+# Conformance: Idris 2's own test suite under the wolfram backend
+
+`scripts/conformance.sh` runs the program-running tests from Idris 2
+v0.8.0's `tests/` tree against Wolfdris and compares with each test's
+`expected` output (written for chez, which we mimic).
+
+```bash
+scripts/build.sh                                  # backend first
+scripts/conformance.sh                            # full run, ~10 min
+scripts/conformance.sh --only "chez/chez001 base/data_list001"
+```
+
+Results land in `build/conformance/` (`failures`, and each test's `output`
+next to its `expected` under `build/conformance/tests/<test>/`). A full run
+ends by comparing the failures with `conformance/baseline.txt`: anything
+newly failing is a regression.
+
+## How it works
+
+- `scripts/conformance.sh` copies `chez`, `allschemes`, `allbackends`,
+  `base`, `prelude`, `contrib` and `idris2` (plus `testutils.sh`) from
+  `~/src/Idris2/tests` into `build/conformance/tests`, so the Idris checkout
+  stays pristine, then prunes:
+  - tests whose `run` contains `--cg` (they force chez/node and would
+    pass without exercising us);
+  - tests that never run a program (type checking / REPL evaluation only:
+    backend-independent);
+  - tests shipping C/Scheme/Racket sources or reading generated chez code;
+  - tests importing threads, network or signal modules;
+  - everything in `conformance/exclude.txt` (with reasons).
+- `conformance/Runner.idr` is a `Test.Golden` runner with one
+  `codegen = Default` pool per surviving directory, run as
+  `runtests scripts/wolfdris --cg wolfram`, so every `run` script's
+  `idris2 …` / `run X.idr` (= `--exec main`) uses our backend.
+- Each program run is capped by `WOLFDRIS_TIMEOUT` (300 s; the Idris
+  runner has none, and one hang blocked a whole run for 90 minutes).
+
+## Status (2026-10-22)
+
+**96 / 108 pass.** First baseline (before this round's fixes): 77 / 123.
+
+Fixed in the first round: `executeExpr` (`--exec`, REPL `:exec`); `-o`
+launcher executables; memoised top-level `Lazy` constants; arithmetic
+`ShiftR` on negatives; chez's crash message formats; `MkNmError`
+definitions; files (C stdio semantics), directories, exit, args, env,
+clock, errno, terminal size; argument passing around a `wolframscript` bug.
+
+### Remaining failures (12), by bucket
+
+| Bucket | Tests | What it needs |
+|---|---|---|
+| Deep non-tail recursion (`$RecursionLimit`) | `chez/newints`, `contrib/json_001`, `contrib/perf001`, `prelude/bind001` | Build step 4: CPS / trampolining, or an accepted cap. |
+| `Data.Buffer` | `chez/buffer001`, `chez/chez004`, `base/system_file_copyFile`, `contrib/system_directory_tree_copyDir` | ~28 scheme-only buffer foreigns (`Data.Buffer`, `System.File.Buffer`): a mutable byte store with typed get/set and file read/write. Mechanical. |
+| Processes | `base/system_run`, `base/system_file_popen`, `allbackends/popen2`, `idris2/misc/golden001` (its runner calls `system`) | `system`/`popen`/`popen2`. Design question first: the kernel runs on Windows, the user's shell is WSL — whose shell should `system "echo hi"` use? |
+
+### Excluded on purpose
+
+See `conformance/exclude.txt`. In short: C FFI, network, threads, tests
+that inspect chez's generated code or chez-specific errors, chez's
+`lazy=weakMemo` directive and GC foreign, and three host differences —
+`-0.0` (no signed zero in WL), processor count and OS name (Windows
+kernel vs WSL), and `currentDir` (a Windows path).

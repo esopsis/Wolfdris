@@ -17,9 +17,12 @@ Begin["WolfdrisRT`"];
    it stays inert. *)
 unit = Con[0];
 
-crash[msg_String] := (
-  WriteString[Streams["stderr"], "ERROR: " <> msg <> "\n"];
-  Exit[1]);
+(* Like chez's blodwen-error-quit: the message on stdout, then exit 1.
+   crashRaw is for compiler-generated crashes (NmCrash: impossible cases,
+   holes); crash is idris_crash, which chez prefixes with "ERROR: ". *)
+crashRaw[msg_String] := (WriteString[$Output, msg <> "\n"]; Exit[1]);
+crashRaw[msg_] := crashRaw[ToString[msg]];
+crash[msg_String] := crashRaw["ERROR: " <> msg];
 crash[msg_] := crash[ToString[msg]];
 
 (* ---- Integer types ---- *)
@@ -56,7 +59,8 @@ Do[With[{t = t, w = wrap[t]},
    the bitwise ops act on the (two's complement) value, none of them wrap. *)
 Do[With[{t = t, w = wrap[t]},
     op["ShiftL", t][a_, b_] := w[BitShiftLeft[a, b]];
-    op["ShiftR", t][a_, b_] := BitShiftRight[a, b];
+    (* Floor, not BitShiftRight: BitShiftRight[-1, 3] is 0, chez's ash gives -1 *)
+    op["ShiftR", t][a_, b_] := Floor[a / 2^b];
     op["BAnd", t][a_, b_] := BitAnd[a, b];
     op["BOr", t][a_, b_] := BitOr[a, b];
     op["BXOr", t][a_, b_] := BitXor[a, b]],
@@ -276,26 +280,167 @@ op[keys__][___] := crash["not implemented: " <> StringRiffle[{keys}, " "]];
 putStr[s_, _] := (WriteString[$Output, s]; unit);
 putChar[c_, _] := (WriteString[$Output, FromCharacterCode[c]]; unit);
 
+(* ---- Pointers and errno ---- *)
+(* A Ptr String is the string itself; NULL is the symbol nullPtr. *)
+isNullPtr[p_] := Boole[p === nullPtr];
+nullPtrConst[] := nullPtr;
+getString[p_] := p;
+freePtr[_, _] := unit;
+
+lastErrno = 0;
+setErrno[e_] := (lastErrno = e);
+getErrno[_] := lastErrno;
+strerrors = <|0 -> "Success", 1 -> "Operation not permitted", 2 -> "No such file or directory",
+  13 -> "Permission denied", 17 -> "File exists", 20 -> "Not a directory",
+  21 -> "Is a directory", 39 -> "Directory not empty"|>;
+strerror[e_, _] := Lookup[strerrors, e, "Unknown error " <> intString[e]];
+
+(* ---- Files ---- *)
+(* Handles are inert FileH[h]. Files opened for reading are loaded whole into
+   fbuf[h] and read with C stdio semantics (fpos[h] is the next character;
+   feofFlag[h] is only set once a read hits the end). Handles 0, 1, 2 are
+   stdin, stdout, stderr. *)
+
 (* wolframscript gives -file scripts no readable stdin stream: all of stdin
-   arrives up front in $ScriptInputString. So input is read from a buffer,
-   and interactive (prompt-then-read) programs aren't possible. *)
-(* It holds the raw UTF-8 bytes, one per character, so decode it. *)
+   arrives up front in $ScriptInputString, as raw UTF-8 bytes one per
+   character. So interactive (prompt-then-read) programs aren't possible. *)
 stdinBuf := stdinBuf = If[StringQ[$ScriptInputString],
   With[{bytes = ToCharacterCode[$ScriptInputString]},
     If[bytes === {} || Max[bytes] < 256,
       Quiet[FromCharacterCode[bytes, "UTF-8"]], $ScriptInputString]],
   ""];
-stdinPos = 1;
-(* idris2_getStr: the next line without its "\n"; "" at end of input *)
-getStr[_] := Module[{rest, nl},
-  If[stdinPos > StringLength[stdinBuf], "",
-    rest = StringDrop[stdinBuf, stdinPos - 1];
+fbuf[0] := fbuf[0] = stdinBuf;
+fpos[0] = 1;
+fileCount = 2;
+
+atEnd[h_] := fpos[h] > StringLength[fbuf[h]];
+
+(* getline: up to and including the next "\n"; "" at end of input *)
+readLineH[h_] := Module[{b = fbuf[h], p = fpos[h], rest, nl},
+  If[atEnd[h], feofFlag[h] = True; "",
+    rest = StringDrop[b, p - 1];
     nl = StringPosition[rest, "\n", 1];
     If[nl === {},
-      stdinPos = StringLength[stdinBuf] + 1; rest,
-      stdinPos += nl[[1, 1]]; StringTake[rest, nl[[1, 1]] - 1]]]];
-getChar[_] := If[stdinPos > StringLength[stdinBuf], 0,
-  With[{c = First[ToCharacterCode[StringTake[stdinBuf, {stdinPos}]]]}, stdinPos++; c]];
+      fpos[h] = StringLength[b] + 1; feofFlag[h] = True; rest,
+      fpos[h] = p + nl[[1, 1]]; StringTake[rest, nl[[1, 1]]]]]];
+(* fread: up to n characters; NULL if none *)
+readCharsH[n_, h_] := Module[{k},
+  If[atEnd[h], feofFlag[h] = True; nullPtr,
+    k = Min[n, StringLength[fbuf[h]] - fpos[h] + 1];
+    If[k < n, feofFlag[h] = True];
+    fpos[h] += k;
+    StringTake[fbuf[h], {fpos[h] - k, fpos[h] - 1}]]];
+(* fgetc: a code point, or -1 at end *)
+readCharH[h_] := If[atEnd[h], feofFlag[h] = True; -1,
+  fpos[h]++; First[ToCharacterCode[StringTake[fbuf[h], {fpos[h] - 1}]]]];
+
+(* idris2_getStr: the next line without its "\n" *)
+getStr[_] := StringDelete[readLineH[0], "\n" ~~ EndOfString];
+getChar[_] := Max[readCharH[0], 0];
+
+readFileUTF8[name_] := With[{bytes = Quiet[ReadByteArray[name]]},
+  Which[bytes === EndOfFile, "",
+        Head[bytes] === ByteArray, FromCharacterCode[Normal[bytes], "UTF-8"],
+        True, $Failed]];
+
+openFile[name_, mode_, _] := Module[{m = StringDelete[mode, "b"], h, s},
+  Which[
+    StringStartsQ[m, "r"],
+      Which[
+        DirectoryQ[name], setErrno[21]; nullPtr,
+        !FileExistsQ[name], setErrno[2]; nullPtr,
+        True, s = readFileUTF8[name];
+          If[s === $Failed, setErrno[13]; nullPtr,
+            h = ++fileCount; fbuf[h] = s; fpos[h] = 1; fname[h] = name; FileH[h]]],
+    StringStartsQ[m, "w" | "a"],
+      If[!DirectoryQ[DirectoryName[ExpandFileName[name]]], setErrno[2]; nullPtr,
+        s = Quiet[If[StringStartsQ[m, "a"], OpenAppend, OpenWrite][name, BinaryFormat -> True]];
+        If[Head[s] =!= OutputStream, setErrno[13]; nullPtr,
+          h = ++fileCount; fstream[h] = s; fname[h] = name; FileH[h]]],
+    True, setErrno[22]; nullPtr]];
+
+closeFile[FileH[h_], _] := (If[Head[fstream[h]] === OutputStream, Close[fstream[h]]]; unit);
+
+writeLine[FileH[1], s_, _] := (WriteString[$Output, s]; 1);
+(* wolframscript merges the kernel's stderr into stdout anyway *)
+writeLine[FileH[2], s_, _] := (WriteString[Streams["stderr"], s]; 1);
+writeLine[FileH[h_], s_, _] := If[Head[fstream[h]] === OutputStream,
+  BinaryWrite[fstream[h], ToCharacterCode[s, "UTF-8"]]; 1, 0];
+
+readLine[FileH[h_], _] := readLineH[h];
+readChars[n_, FileH[h_], _] := readCharsH[n, h];
+readChar[FileH[h_], _] := readCharH[h];
+seekLine[FileH[h_], _] := (readLineH[h]; 0);
+fileEOF[FileH[h_], _] := Boole[TrueQ[feofFlag[h]]];
+fileError[FileH[_], _] := 0;
+fileErrno[_] := Switch[lastErrno, 2, 2, 13, 3, 17, 4, _, lastErrno + 5];
+flushFile[FileH[_], _] := 0;
+fileSize[FileH[h_], _] := If[StringQ[fbuf[h]], Length[ToCharacterCode[fbuf[h], "UTF-8"]],
+  If[StringQ[fname[h]], Replace[Quiet[FileByteCount[fname[h]]], Except[_Integer] -> -1], -1]];
+fileIsTTY[FileH[_], _] := 0;
+removeFile[name_, _] := If[FileExistsQ[name] && !DirectoryQ[name],
+  Quiet[DeleteFile[name]]; 0, setErrno[2]; -1];
+stdinFile[] := FileH[0];
+stdoutFile[] := FileH[1];
+stderrFile[] := FileH[2];
+
+(* ---- Directories ---- *)
+(* Paths are those of the Windows kernel process (relative paths work). *)
+currentDir[_] := Directory[];
+changeDir[d_, _] := If[DirectoryQ[d], SetDirectory[d]; 0, setErrno[2]; -1];
+createDir[d_, _] := Which[
+  FileExistsQ[d], setErrno[17]; -1,
+  !DirectoryQ[DirectoryName[ExpandFileName[d]]], setErrno[2]; -1,
+  True, Quiet[CreateDirectory[d]]; 0];
+removeDir[d_, _] := (Quiet[DeleteDirectory[d]]; unit);
+dirCount = 0;
+openDir[d_, _] := If[DirectoryQ[d],
+  dirCount++; dentries[dirCount] = Join[{".", ".."}, FileNameTake /@ FileNames["*", d]];
+  Dir[dirCount],
+  setErrno[2]; nullPtr];
+dirEntry[Dir[i_], _] := If[dentries[i] === {}, nullPtr,
+  With[{e = First[dentries[i]]}, dentries[i] = Rest[dentries[i]]; e]];
+closeDir[Dir[_], _] := unit;
+
+(* ---- System ---- *)
+exit[code_, _] := Exit[code];
+(* argv: {script, args...}. wolframscript drops arguments starting with "-",
+   so scripts/run-wl passes them in WOLFDRIS_ARGS (base64 of NUL-terminated
+   UTF-8 strings; "-" for none). Otherwise fall back to $ScriptCommandLine. *)
+decodeArgs["-"] = {};
+decodeArgs[enc_String] := With[{bytes = Normal[BaseDecode[enc]]},
+  With[{ends = Flatten[Position[bytes, 0]]},
+    FromCharacterCode[#, "UTF-8"] & /@
+      MapThread[Take[bytes, {#1 + 1, #2 - 1}] &, {Prepend[Most[ends], 0], ends}]]];
+argv := argv = With[{enc = Environment["WOLFDRIS_ARGS"]},
+  If[StringQ[enc] && enc =!= "",
+    Prepend[decodeArgs[enc], First[$ScriptCommandLine, "main"]],
+    $ScriptCommandLine]];
+argCount[_] := Length[argv];
+getArg[n_, _] := If[0 <= n < Length[argv], argv[[n + 1]], ""];
+getEnv[v_, _] := Replace[Environment[v], $Failed -> nullPtr];
+getEnvPair[n_, _] := With[{env = Normal[GetEnvironment[]]},
+  If[0 <= n < Length[env], env[[n + 1, 1]] <> "=" <> env[[n + 1, 2]], nullPtr]];
+setEnv[v_, val_, overwrite_, _] := (
+  If[overwrite =!= 0 || Environment[v] === $Failed, SetEnvironment[v -> val]]; 0);
+unsetEnv[v_, _] := (SetEnvironment[v -> None]; 0);
+unixTime[_] := UnixTime[];
+getPID[_] := $ProcessID;
+sleepSec[s_, _] := (Pause[s]; unit);
+sleepMicro[us_, _] := (Pause[us/10^6]; unit);
+nProcessors[_] := $ProcessorCount;
+termSetup[_] := unit;
+termZero[_] := 0;
+
+(* ---- Clocks (System.Clock); OSClock is ClockH[seconds, nanoseconds] ---- *)
+toClock[t_] := With[{s = Floor[t]}, ClockH[s, Floor[(t - s) 10^9]]];
+clockUtc[_] := toClock[AbsoluteTime[TimeZone -> 0] - AbsoluteTime[{1970}, TimeZone -> 0]];
+clockMonotonic[_] := toClock[SessionTime[]];
+clockCpu[_] := toClock[TimeUsed[]];
+clockZero[_] := ClockH[0, 0];
+clockValid[_, _] := 1;
+clockSecond[ClockH[s_, _], _] := s;
+clockNanosecond[ClockH[_, ns_], _] := ns;
 
 (* %extern primitives (see extPrim in src/Wolfdris/Emit.idr). IORefs and
    arrays are handles into runtime-owned associations; nothing is freed. *)

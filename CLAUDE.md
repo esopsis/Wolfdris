@@ -119,7 +119,33 @@ Code: `src/Wolfdris/{Codegen,Emit,Mangle,Foreign}.idr`, runtime
   one per character. The runtime decodes it once and reads lines/chars from
   that buffer. Consequence: piped input works, **interactive
   prompt-then-read programs don't**.
-- **`:exec` / `executeExpr`** not supported yet (throws with a hint).
+- **Running programs.** `executeExpr` (`--exec`, REPL `:exec`) writes
+  `tmpDir/_tmp_wolfdris.wl` and runs `$WOLFDRIS_RUNNER file` (default
+  `wolframscript -file`). `-o foo` writes `build/exec/foo.wl` **and** a
+  launcher `build/exec/foo` (sh, uses `$WOLFDRIS_RUNNER` or the runner
+  known at compile time), like other backends' executables.
+  `scripts/wolfdris` sets `WOLFDRIS_RUNNER=scripts/run-wl`, which converts
+  the path for Windows `wolframscript.exe`, applies `WOLFDRIS_TIMEOUT`,
+  and passes program arguments in `WOLFDRIS_ARGS` (forwarded via
+  `WSLENV`): **`wolframscript` silently drops script arguments starting
+  with `-` and everything after them**, with no escape. The runtime
+  decodes `WOLFDRIS_ARGS` (base64 of NUL-terminated UTF-8) for `getArgs`.
+- **I/O and system foreigns** (`Foreign.idr` table → runtime): files with
+  C stdio semantics (read-mode files loaded whole into a buffer; `readLine`
+  keeps `\n`, `""` at EOF; EOF flag only set when a read hits the end;
+  `fileErrno` codes as `idris_file.c`), stdin as handle 0, directories,
+  exit, args, env (in-process; WSL env vars don't reach the Windows kernel
+  except via `WSLENV`), clocks, errno/strerror, terminal size (0).
+  Pointers: a `Ptr String` is the string; NULL is `nullPtr`.
+- **Runtime heads must not be `System`` symbols.** Inside
+  `Begin["WolfdrisRT`"]`, a name like `File` or `Clock` silently resolves
+  to the built-in — use `FileH`, `ClockH`, etc. Check new heads with
+  `Names["System`" <> name]`.
+- **Crashes** match chez: compiler-generated (`NmCrash`) print the bare
+  message, `idris_crash` prints `ERROR: ` + message; both on stdout, exit 1.
+- **Top-level `Lazy` constants** (`MkNmFun [] (NmDelay …)`) memoise their
+  forced value (`f$lazy`), like chez's `(define f (delay …))`. Other lazy
+  values are not memoised (chez default; `lazy=weakMemo` is chez-only).
 
 Semantics copied from chez (v0.8.0 `support.ss` / `Scheme/Common.idr`):
 `Neg` is **not** wrapped; `Mod` is never wrapped; casts String→Int parse a
@@ -182,6 +208,10 @@ wrappers to primitive element types.
 - **No signed zero.** WL has no `-0.0` (`Sign[-0.]` is `0`). Accepted
   divergence from IEEE.
 - **No interactive stdin** under `wolframscript -file` (see stdin above).
+- **The program runs on Windows, not in WSL.** `currentDir` is a Windows
+  path, `prim__os` is `"windows"`, processor count is Windows', WSL
+  environment variables aren't visible, and the kernel's stderr is merged
+  into stdout.
 - **Transcendental functions use WL's implementations**, chez uses C libm;
   they agreed on everything tested, but last-ulp differences are possible.
 - **Slow.** Generated code will be far slower than chez — WL function-call
@@ -202,9 +232,12 @@ wrappers to primitive element types.
    API facts for this step: [docs/idris-backend-api.md](docs/idris-backend-api.md).
 2. **Runtime library in WL.** The bulk of the work (see below).
    **Progress 2026-10-22:** all primitives, `Double` with IEEE semantics,
-   stdin, IORefs/arrays done; 8/8 differential tests pass. Still to do:
-   adopt Idris's own test suite as a conformance suite (plan mode first),
-   and whatever foreigns it surfaces (files, clock, args, system…).
+   stdin, IORefs/arrays done; 8/8 differential tests pass.
+   **Conformance 2026-10-22:** Idris's own test suite runs against us
+   (`scripts/conformance.sh`, [docs/conformance.md](docs/conformance.md)):
+   **96/108 pass**. Remaining buckets: deep recursion (→ step 4),
+   `Data.Buffer` (mechanical), processes (`system`/`popen`, needs a
+   Windows-vs-WSL shell decision first).
 3. **FFI + first wrappers.** Marshalling both directions; `Total`, `Map`,
    `Select`, `Length`, `Sort`.
 4. **Tail call handling.** See risks.
@@ -405,6 +438,9 @@ scripts/wolfdris --cg wolfram Foo.idr -o foo
 
 # differential tests vs chez: all of tests/*/Main.idr, or name some
 scripts/test.sh [name...]
+
+# Idris 2's own test suite against us (~10 min; see docs/conformance.md)
+scripts/conformance.sh [--only "chez/chez001 base/data_list001"]
 ```
 
 Test layout: `tests/<name>/Main.idr`, plus an optional `tests/<name>/input`
