@@ -70,6 +70,71 @@ case analysis — and the tail-call positions WL handles natively (see Risks)
 are exactly the forms this stage emits. Revisit only if we need explicit
 stack control (e.g. CPS for non-tail recursion).
 
+### Readable WL output: deferred, not ruled out
+
+A possible later mode: emit idiomatic WL for the subset of functions where
+it's achievable (first-order, non-monadic, simple types), faithful output
+for everything else, with the output marking which is which. Not a goal for
+steps 1–4. Recorded here so it isn't assumed impossible.
+
+**The irreversible decision already went the right way.** Named case trees
+is the highest-level IR, so more of the original program's shape survives
+than in the lower IRs, which discard it. **But only partly:** by NamedCExp,
+Idris has already flattened nested patterns into case trees, inlined small
+functions, turned interfaces into dictionary passing, lifted
+`where`/`case`/`with` blocks into separate top-level functions (`Nested`,
+`CaseBlock`, `WithBlock` names), turned `Nat` into `Integer`, and turned
+`IO` into explicit world-token passing. So first-order code like `sumList`
+can come out close to the source; anything using `map`/`show`/`>>=` shows
+dictionary plumbing, and **`IO` code will essentially never be idiomatic**.
+That's why the scope is "first-order, non-monadic".
+
+**Prerequisites already in place:**
+- Equivalence checking: `scripts/test.sh` (differential vs chez) and, more
+  strongly, `scripts/conformance.sh` (Idris's own suite). Running the
+  conformance suite with readable mode on exercises a second emit path
+  against ~100 real programs. Two translations of one function must behave
+  identically, forever; these are that harness.
+- Emitted shapes are already half-idiomatic: `f[a_, b_] := body`, `With`
+  for lets, `Switch` for case analysis.
+- Tail-call findings help: WL handles tail calls natively in
+  `If`/`Which`/`Switch`/`With`/`Function` position, so step 4 may be a
+  placement rule rather than JS's `Compiler.ES.TailRec` loop transformation.
+  That transformation is exactly what would destroy readable recursion —
+  `sumList` can likely stay recursive in the output. **Constraint:** a tail
+  call must never follow `;` (CompoundExpression), which is how idiomatic WL
+  usually sequences statements, so readable output will sometimes be
+  slightly un-idiomatic in order to stay correct.
+
+**The three hooks, when we want it:**
+1. `Mangle.idr` — readable mode: leave names alone where they're already
+   valid, collision-free WL symbols. Catch: many locals are
+   machine-generated (`{arg:0}`, `{eta:0}`), and the original user names
+   aren't always in the IR, so readable arguments may need name recovery.
+2. Representation — **decided (2026-10-23): keep `Con` cells as the internal
+   representation** so cons and rest stay O(1). WL lists exist only at the
+   boundary (paclet entry points, FFI), converted once in O(n). Making
+   `List` a WL list internally would turn ordinary recursive list code
+   O(n²) (`Prepend`/`Rest` copy). So readable mode does **not** get real
+   lists, and the paclet marshalling work is *not* shared with it.
+   `JUST`/`NOTHING` at the boundary need their own rule: `Missing[]` can't
+   distinguish `Just Nothing` from `Nothing` for nested `Maybe`.
+3. Un-currying — calls to top-level functions are **already** `f[a, b]`;
+   only closures are curried (`e[a][b]`). Un-currying closures is the hard
+   part: it needs proof that every call site applies all the arguments. So
+   this hook is smaller than it looks, and harder.
+
+**Before starting, measure the gap cheaply:** take 3 small programs,
+hand-write the ideal WL for each, and compare with current output.
+
+**Why deferred:** readability has no natural stopping point and is more
+immediately rewarding than runtime bugs or tail calls. The failure mode is
+beautiful output for pure list functions and no working `IO`. Revisit after
+step 4.
+
+**Not in scope:** types in the output. They're erased at the IR; the
+generated code carries no type information and won't.
+
 ### Codegen design (step 1, implemented 2026-10-21)
 
 Code: `src/Wolfdris/{Codegen,Emit,Mangle,Foreign}.idr`, runtime
