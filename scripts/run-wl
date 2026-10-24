@@ -5,7 +5,7 @@
 WS=${WOLFRAMSCRIPT:-"/mnt/c/Program Files/Wolfram Research/WolframScript/wolframscript.exe"}
 file=$1; shift
 case "$WS" in
-  *.exe) path=$(wslpath -w "$file") ;;
+  *.exe) path=$(wslpath -w "$(realpath "$file")") ;;
   *)     path=$file ;;
 esac
 # wolframscript silently drops script arguments that start with "-" (and

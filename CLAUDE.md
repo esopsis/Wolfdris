@@ -576,7 +576,18 @@ scripts/test.sh [name...]
 
 # Idris 2's own test suite against us (~10 min; see docs/conformance.md)
 scripts/conformance.sh [--only "chez/chez001 base/data_list001"]
+
+# any long run: stop and report if output and CPU stop moving
+scripts/watch.sh --stall 300 -- scripts/conformance.sh
 ```
+
+**Long runs: never wait silently.** Run long jobs under
+`scripts/watch.sh` (catches *silent* hangs: no output growth, no Linux CPU,
+no CPU in Wolfram kernels started by the run) *and* with
+`WOLFDRIS_TIMEOUT` (catches busy infinite loops; enforced inside the
+kernel). Killing wolframscript from WSL doesn't stop the Windows kernel, so
+after a killed run check for orphaned `wolfram` processes — by start time,
+so as not to kill a live run.
 
 Test layout: `tests/<name>/Main.idr`, plus an optional `tests/<name>/input`
 piped to both programs as stdin; the script compiles with chez and
