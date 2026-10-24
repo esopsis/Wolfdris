@@ -35,9 +35,10 @@ newly failing is a regression.
 - Each program run is capped by `WOLFDRIS_TIMEOUT` (300 s; the Idris
   runner has none, and one hang blocked a whole run for 90 minutes).
 
-## Status (2026-10-22)
+## Status (2026-10-24, after step 4 / CPS)
 
-**96 / 108 pass.** First baseline (before this round's fixes): 77 / 123.
+**97 / 108 pass**, no regressions. History: 77 / 123 (first baseline),
+96 / 108 (2026-10-22, first fix round).
 
 Fixed in the first round: `executeExpr` (`--exec`, REPL `:exec`); `-o`
 launcher executables; memoised top-level `Lazy` constants; arithmetic
@@ -45,11 +46,15 @@ launcher executables; memoised top-level `Lazy` constants; arithmetic
 definitions; files (C stdio semantics), directories, exit, args, env,
 clock, errno, terminal size; argument passing around a `wolframscript` bug.
 
-### Remaining failures (12), by bucket
+Step 4 (CPS + closure conversion) removed the recursion-depth failures:
+`contrib/perf001` now passes; the other three no longer overflow but are
+too slow for the 300 s per-program limit.
+
+### Remaining failures (11), by bucket
 
 | Bucket | Tests | What it needs |
 |---|---|---|
-| Deep non-tail recursion (`$RecursionLimit`) | `chez/newints`, `contrib/json_001`, `contrib/perf001`, `prelude/bind001` | Build step 4: CPS / trampolining, or an accepted cap. |
+| Too slow (300 s limit) | `prelude/bind001` (builds 12.5M list cells), `contrib/json_001` (`[0 .. 55295]` chars, each round-tripped through JSON), `chez/newints` (33,800-pair checks per op) | General codegen speed — e.g. direct style for non-recursive leaf functions, cheaper primitive dispatch. Was the recursion bucket before step 4. |
 | `Data.Buffer` | `chez/buffer001`, `chez/chez004`, `base/system_file_copyFile`, `contrib/system_directory_tree_copyDir` | ~28 scheme-only buffer foreigns (`Data.Buffer`, `System.File.Buffer`): a mutable byte store with typed get/set and file read/write. Mechanical. |
 | Processes | `base/system_run`, `base/system_file_popen`, `allbackends/popen2`, `idris2/misc/golden001` (its runner calls `system`) | `system`/`popen`/`popen2`. Design question first: the kernel runs on Windows, the user's shell is WSL — whose shell should `system "echo hi"` use? |
 

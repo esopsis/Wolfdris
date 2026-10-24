@@ -30,7 +30,8 @@ for name in "${names[@]}"; do
     echo "FAIL $name (wolfdris compile)"; cat build_wl.log
     fail=$((fail+1)); failed+=("$name"); continue
   fi
-  "$WS" -file "$(wslpath -w build/exec/main.wl)" < "$input" 2>&1 | tr -d '\r' > actual.out
+  WOLFDRIS_TIMEOUT=${WOLFDRIS_TIMEOUT:-900} WOLFRAMSCRIPT="$WS" \
+    "$repo/scripts/run-wl" build/exec/main.wl < "$input" 2>&1 | tr -d '\r' > actual.out
   if diff -u expected.out actual.out > diff.out; then
     echo "PASS $name"; pass=$((pass+1))
   else

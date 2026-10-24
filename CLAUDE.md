@@ -95,16 +95,16 @@ That's why the scope is "first-order, non-monadic".
   conformance suite with readable mode on exercises a second emit path
   against ~100 real programs. Two translations of one function must behave
   identically, forever; these are that harness.
-- Emitted shapes are already half-idiomatic: `f[a_, b_] := body`, `With`
-  for lets, `Switch` for case analysis.
-- Tail-call findings help: WL handles tail calls natively in
-  `If`/`Which`/`Switch`/`With`/`Function` position, so step 4 may be a
-  placement rule rather than JS's `Compiler.ES.TailRec` loop transformation.
-  That transformation is exactly what would destroy readable recursion —
-  `sumList` can likely stay recursive in the output. **Constraint:** a tail
-  call must never follow `;` (CompoundExpression), which is how idiomatic WL
-  usually sequences statements, so readable output will sometimes be
-  slightly un-idiomatic in order to stay correct.
+- ~~Emitted shapes are already half-idiomatic~~ — **no longer true after
+  step 4 (2026-10-24)**: output is now full CPS with closure conversion and
+  no `With` (see "CPS + closure conversion"); every function takes a
+  continuation and every binding is a call to a lifted definition. That's
+  far from readable. A readable mode would emit **direct style** for
+  provably non-recursive, closure-free functions — which is also the
+  natural performance optimisation for CPS, so the two share a hook. But
+  readable direct style must still avoid `With` over bodies holding large
+  values (see the WL substitution facts), and tail calls must never follow
+  `;`.
 
 **The three hooks, when we want it:**
 1. `Mangle.idr` — readable mode: leave names alone where they're already
@@ -119,8 +119,8 @@ That's why the scope is "first-order, non-monadic".
    lists, and the paclet marshalling work is *not* shared with it.
    `JUST`/`NOTHING` at the boundary need their own rule: `Missing[]` can't
    distinguish `Just Nothing` from `Nothing` for nested `Maybe`.
-3. Un-currying — calls to top-level functions are **already** `f[a, b]`;
-   only closures are curried (`e[a][b]`). Un-currying closures is the hard
+3. Un-currying — calls to top-level functions are **already** `f[a, b, k]`;
+   only closures are curried (`c[a, k1]`, then `c'[b, k]`). Un-currying closures is the hard
    part: it needs proof that every call site applies all the arguments. So
    this hook is smaller than it looks, and harder.
 
@@ -148,14 +148,10 @@ Code: `src/Wolfdris/{Codegen,Emit,Mangle,Foreign}.idr`, runtime
 - **Contexts:** generated symbols are fully qualified in `` WolfdrisGen` ``;
   the runtime lives in `` WolfdrisRT` `` (written inside
   `Begin`/`End`).
-- **Shapes:** top-level function → `f[a_, b_] := body`; zero-arity
-  definition → memoised constant `f := f = body`; `NmLam` →
-  `Function[{x}, b]`; `NmLet` → `With`; closure application curried
-  `e[a][b]`; constructors `WolfdrisRT`Con[tag, fields…]` (tag = name
-  string when Idris gives none); con case → bind scrutinee once with
-  `With`, `Switch` on `[[1]]`, fields via `With`; const case → `Switch` on
-  literals; missing default → crash. `NmDelay`/`NmForce` →
-  `Function[{}, e]` / `e[]`. All tail positions are in tail-safe forms.
+- **Shapes:** *(superseded by step 4 — see "CPS + closure conversion"
+  below)* constructors `WolfdrisRT`Con[tag, fields…]` (tag = name string
+  when Idris gives none); con case → `Switch` on `[[1]]`; const case →
+  `Switch` on literals; missing default → crash.
 - **Mangling:** our own injective `nameStr` (not `show`, which prints `DN`
   display names), then every non-`[A-Za-z0-9]` char → `$<hex>$`. Prefixes
   `f` (top-level), `v` (locals), `s` (scrutinee temps), `x` (foreign args).
@@ -216,6 +212,80 @@ Semantics copied from chez (v0.8.0 `support.ss` / `Scheme/Common.idr`):
 `Neg` is **not** wrapped; `Mod` is never wrapped; casts String→Int parse a
 number and truncate, else 0; Int→Char yields 0 for invalid code points;
 `substr` clamps offset and length; string `<` compares code points.
+
+### CPS + closure conversion (step 4, implemented 2026-10-24)
+
+**Problem.** WL caps non-tail recursion (`$RecursionLimit`, then the
+Windows C stack: past ~50k–100k levels the kernel dies with 0xC00000FD).
+Ordinary Idris library code is non-tail recursive (`[a..b]` via
+`takeUntil`, `foldr`, `traverse_`/`for_`, `sort`, `zip`, `lines`, `Nat`
+comparisons), so `[1..5000]` used to fail. Worse, hitting the limit does
+**not** stop the program: `TerminatedEvaluation["RecursionLimit"]` comes
+back as a value and evaluation carries on (→ garbage, "unmatched case").
+
+**Decision (with the user): full CPS + our own closure conversion**, in
+`Emit.idr`:
+- Every function and closure takes a continuation; every call is a tail
+  call (WL handles those natively). Depth is unlimited: verified 200,000+
+  deep (`tests/deeprec`).
+- One-pass CPS with a meta-continuation (`Obj k` / `Meta m`): no
+  administrative continuations; `reify` makes a real one only when needed.
+- **Closure conversion**: lambdas, thunks and continuations are lifted to
+  top-level definitions taking their captured variables first; closure
+  values are data, `WolfdrisRT`Clo[code, captured…]`, applied by one
+  runtime rule `Clo[f_, c___][a___] := f[c, a]`.
+- **No `With` in generated code.** Every binding (let, case fields,
+  scrutinee, join point, effect result) is a direct call to a lifted
+  definition with the values as parameters (`liftCall`).
+- **Every binder gets a fresh WL symbol** (`localSym x <> "$N"`), tracked
+  by the dynamic scope stack (`InScope`); captures use a whole-symbol test
+  (`occursSym`).
+- Result: same speed as the old direct style on our benchmark (34–38 s vs
+  38–40 s), linear scaling (64,000-element `foldr`/ranges in ~7 s).
+- Rejected: selective CPS (can't see recursion through closures at run
+  time, e.g. `IO` `for_`); Idris's lambda-lifted IR (doesn't cover our CPS
+  continuations, so two mechanisms; de Bruijn variables; reopens the IR
+  decision).
+
+**Why each piece — WL facts found the hard way (WL 15.0/15.1):**
+- **`With` and `Function` application walk the substituted body,
+  including values already embedded in it, whenever those values mention
+  many distinct symbols.** With 1–2 distinct symbols WL skips them (some
+  per-expression symbol summary); with 400 the cost was linear in the
+  value's size. Generated code always has hundreds (every `lamN`/`contN`),
+  so `With` over a body holding a list / continuation chain / dictionary
+  made loops quadratic. Pattern substitution in a `SetDelayed` definition
+  only walks its own small template: constant at any value size. Hence
+  `liftCall` instead of `With`, and closures as data instead of `Function`.
+  The same effect made plain CPS continuations, `IO` `for_` and ranges
+  quadratic before each fix.
+- **Pattern substitution doesn't respect inner scoping.** A captured value
+  replaces *every* occurrence of the pattern variable in the lifted body,
+  including an inner binder of the same name (`With[{5050 = …}]`). Idris's
+  IR reuses local names in nested scopes → fresh symbol per binder.
+- **Over-capture is not harmless.** A substring capture test matched
+  `WolfdrisGen`k` inside `WolfdrisGen`k581`, so closures (e.g. `IO`
+  actions) kept their enclosing continuations alive; `traverse_` became
+  *exponential*. Whole-symbol test fixed it.
+- Name-dependence is real and misleading: one With variable name was fast,
+  another slow, same code — don't trust micro-benchmarks that use 1–2
+  symbols.
+
+**Runtime side** (`runtime.wl`): `idK`, `Clo` rule, and the backstop —
+`$RecursionLimit = 10000`, a `Message` handler that `Abort[]`s on
+`$RecursionLimit::reclim`, and `runMain` (`CheckAbort` → `ERROR: stack
+overflow (recursion too deep)`, exit 1; `Exit` can't be called from inside
+the handler under wolframscript). `$Messages = {}` unless `WOLFDRIS_DEBUG`
+is set (WL messages would land in program output). `runMain` also enforces
+`WOLFDRIS_TIMEOUT` with `TimeConstrained`: killing wolframscript from WSL
+(`timeout`) leaves the Windows kernel running — orphaned kernels burned
+CPU for hours before this. The runtime isolates its context path
+(`$ContextPath = {"System`"}` while loading) so it can't redefine a
+user's existing `Global`` symbols.
+
+**Step 3 note:** Idris closures are now `Clo` data with CPS calling
+convention `c[x, k]`. Handing one to a WL function (e.g. a `Select`
+predicate) needs an adapter: `Function[{x}, c[x, WolfdrisRT`idK]]`.
 
 ### Primary reference: the in-tree JavaScript backend
 
@@ -300,12 +370,13 @@ wrappers to primitive element types.
    stdin, IORefs/arrays done; 8/8 differential tests pass.
    **Conformance 2026-10-22:** Idris's own test suite runs against us
    (`scripts/conformance.sh`, [docs/conformance.md](docs/conformance.md)):
-   **96/108 pass**. Remaining buckets: deep recursion (→ step 4),
+   **96/108 pass**; after step 4: **97/108**. Remaining buckets: speed,
    `Data.Buffer` (mechanical), processes (`system`/`popen`, needs a
    Windows-vs-WSL shell decision first).
 3. **FFI + first wrappers.** Marshalling both directions; `Total`, `Map`,
    `Select`, `Length`, `Sort`.
-4. **Tail call handling.** See risks.
+4. ✅ **Done 2026-10-24 (before step 3)** — **Deep recursion / tail calls.**
+   Full CPS + closure conversion; see "CPS + closure conversion".
 5. **Grow the wrapper library** as real programs demand it. Mining notes:
    [docs/wrapper-mining.md](docs/wrapper-mining.md).
 
@@ -449,17 +520,16 @@ Write the primitive edge-case programs first, one per primitive type:
   | non-tail (`1 + len[r]`) | ❌ fails at depth 1024 |
   | 100,001-deep nested `cons[...]` data | ✅ builds and re-evaluates |
 
-  So step 4 may mostly be a **codegen rule**: emit tail calls only in
-  `If`/`Which`/`Switch`/`With`/`Function` position, never after `;` or
-  inside `Module`, and raise `$IterationLimit`. **Non-tail recursion is the
-  real limit** — raising `$RecursionLimit` just moves the crash to the C
-  stack; needs CPS or an accepted cap. Invisible until it breaks on
-  realistic input sizes.
+  **Resolved by step 4 (CPS + closure conversion, see above).** Raising
+  `$RecursionLimit` alone was unsafe: C stack per limit unit depends on
+  code shape (40,000 crashed the kernel for one shape; 20,000 was clean for
+  all tried), hence the backstop value 10,000.
 
-  Hitting the limit yields `TerminatedEvaluation["RecursionLimit"]`, and on
-  the local kernel it **aborted the whole top-level evaluation**, not just
-  the failing subexpression — `Check` doesn't catch it. So in generated code
-  a stack overflow kills the run; it can't be caught and recovered from.
+  Correction (2026-10-23): hitting the limit does **not** reliably abort
+  the whole evaluation — `TerminatedEvaluation["RecursionLimit"]` is often
+  returned as a value and evaluation continues (e.g. `{1, deep, 2}` →
+  `{1, TerminatedEvaluation[…], 2}`). The runtime's message handler +
+  `runMain` now turn it into a clean crash.
 - **Version churn.** The backend links against Idris compiler internals
   (`Core.TT`, `Compiler.Common`), which are not version-stable. Mitigations:
   pin the Idris version, keep the backend small, consume the lowest-level IR

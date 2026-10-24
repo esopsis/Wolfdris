@@ -11,6 +11,11 @@ $IterationLimit = Infinity;
 SetOptions[$Output, CharacterEncoding -> "UTF-8"];
 
 Begin["WolfdrisRT`"];
+(* With only System` on the path, every name below is created in
+   WolfdrisRT`. Otherwise a name that already exists elsewhere on the path
+   (say a user's Global`op) would be picked up and redefined. *)
+WolfdrisRT`$savedContextPath = $ContextPath;
+$ContextPath = {"System`"};
 
 (* ---- Values ---- *)
 (* Con[tag, fields...] is a constructor value; Con has no definitions, so
@@ -24,6 +29,44 @@ crashRaw[msg_String] := (WriteString[$Output, msg <> "\n"]; Exit[1]);
 crashRaw[msg_] := crashRaw[ToString[msg]];
 crash[msg_String] := crashRaw["ERROR: " <> msg];
 crash[msg_] := crash[ToString[msg]];
+
+(* ---- Continuations and the entry point ---- *)
+(* Generated code is in continuation-passing style (see Emit.idr): every
+   call is a tail call, so Idris recursion depth doesn't grow WL's stack. *)
+idK = Function[{v}, v];
+
+(* Closures and continuations are data: Clo[code, captured...], where code is
+   a lifted top-level definition taking the captured values first (see the
+   CPS notes in Emit.idr for why not Function). Applying one is a tail call. *)
+Clo[f_, c___][a___] := f[c, a];
+
+(* Backstop for anything that still nests too deeply. Hitting
+   $RecursionLimit doesn't stop evaluation on its own: TerminatedEvaluation
+   comes back as a value and the program carries on with garbage. So a
+   message handler aborts, and runMain turns that into a clean crash.
+   (Exit doesn't work from inside the handler under wolframscript.) 10000
+   is about half the largest limit measured to fail cleanly for every code
+   shape tried; past ~40000 some shapes overflow the C stack and the kernel
+   dies instead. *)
+$RecursionLimit = 10000;
+overflowed = False;
+overflowHandler[Hold[Message[$RecursionLimit::reclim | $RecursionLimit::reclim2, ___], _]] :=
+  (overflowed = True; Abort[]);
+Internal`AddHandler["Message", overflowHandler];
+(* WL's own messages would end up in the program's output (wolframscript
+   merges stderr into stdout); set WOLFDRIS_DEBUG to see them. *)
+If[!StringQ[Environment["WOLFDRIS_DEBUG"]], $Messages = {}];
+
+(* WOLFDRIS_TIMEOUT (seconds) is enforced here, inside the kernel: killing
+   wolframscript from WSL (e.g. with `timeout`) leaves the Windows kernel
+   running. *)
+timeLimit[] := With[{t = Environment["WOLFDRIS_TIMEOUT"]},
+  If[StringQ[t] && StringMatchQ[t, DigitCharacter ..], FromDigits[t], Infinity]];
+
+SetAttributes[runMain, HoldAll];
+runMain[main_] := CheckAbort[
+  TimeConstrained[main;, timeLimit[], crash["time limit exceeded"]],
+  If[overflowed, crash["stack overflow (recursion too deep)"], crashRaw["aborted"]]];
 
 (* ---- Integer types ---- *)
 signedBits = <|"Int" -> 64, "Int8" -> 8, "Int16" -> 16, "Int32" -> 32, "Int64" -> 64|>;
@@ -469,4 +512,5 @@ fastPack[l_] := FromCharacterCode[conToList[l]];
 fastUnpack[s_] := listToCon[ToCharacterCode[s]];
 fastConcat[l_] := StringJoin[conToList[l]];
 
+$ContextPath = WolfdrisRT`$savedContextPath;
 End[];

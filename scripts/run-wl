@@ -13,9 +13,11 @@ esac
 # base64 of the NUL-terminated UTF-8 strings. WSLENV forwards it to Windows.
 export WOLFDRIS_ARGS=$(printf '%s\0' "$@" | base64 -w0)
 [ $# -eq 0 ] && WOLFDRIS_ARGS=-
-export WSLENV="WOLFDRIS_ARGS${WSLENV:+:$WSLENV}"
+export WSLENV="WOLFDRIS_ARGS:WOLFDRIS_TIMEOUT:WOLFDRIS_DEBUG${WSLENV:+:$WSLENV}"
 if [ -n "${WOLFDRIS_TIMEOUT:-}" ]; then
-  exec timeout -k 10 "$WOLFDRIS_TIMEOUT" "$WS" -file "$path"
+  # The runtime enforces WOLFDRIS_TIMEOUT itself; this outer timeout is only
+  # a backstop (killing wolframscript from WSL can leave the kernel running).
+  exec timeout -k 10 "$((WOLFDRIS_TIMEOUT + 60))" "$WS" -file "$path"
 else
   exec "$WS" -file "$path"
 fi
