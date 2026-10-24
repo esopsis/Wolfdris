@@ -394,9 +394,12 @@ emitMain : {auto f : Ref Fresh Int} -> {auto l : Ref LiftedDefs (List String)} -
            {auto s : Ref InScope (List (Maybe Name, String))} -> NamedCExp -> Core String
 emitMain e = pure $ rt "runMain[" ++ !(cps e (Obj idK)) ++ "]"
 
-isWorld : CFType -> Bool
-isWorld CFWorld = True
-isWorld _ = False
+||| Foreign arguments that carry no value: the world token, and erased type
+||| arguments (foreign definitions keep their implicits, e.g. `{0 a : Type}`).
+noValue : CFType -> Bool
+noValue CFWorld = True
+noValue (CFUser (UN (Basic "Type")) []) = True
+noValue _ = False
 
 emitForeign : FC -> Name -> List String -> List CFType -> Core String
 emitForeign fc n specs fargs
@@ -406,7 +409,7 @@ emitForeign fc n specs fargs
          call <- case lookupForeign n of
            Just impl => pure $ impl ++ "[" ++ commas xs ++ "]"
            Nothing => case wolframSpec specs of
-             Just fn => let args = map fst (filter (not . isWorld . snd) (zip xs fargs)) in
+             Just fn => let args = map fst (filter (not . noValue . snd) (zip xs fargs)) in
                         pure $ fn ++ "[" ++ commas args ++ "]"
              Nothing => throw $ GenericMsg fc $
                "Wolfdris: no Wolfram implementation for foreign function "

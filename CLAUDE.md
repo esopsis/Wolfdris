@@ -285,7 +285,74 @@ user's existing `Global`` symbols.
 
 **Step 3 note:** Idris closures are now `Clo` data with CPS calling
 convention `c[x, k]`. Handing one to a WL function (e.g. a `Select`
-predicate) needs an adapter: `Function[{x}, c[x, WolfdrisRT`idK]]`.
+predicate) needs an adapter — done in step 3 as `callback[…, c][x]`
+(SubValues, not `Function`; see "FFI marshalling").
+
+### FFI marshalling (step 3, implemented 2026-10-24)
+
+**Split (decided with the user): mechanical conversion in WL, type facts
+in Idris.** The runtime converts (small, generic, trusted, fast); the
+wrapper library is ordinary type-checked Idris that measures and checks.
+
+**Runtime representations** (confirmed with `--dumpcases`, v0.8.0 — the
+runtime's converters hard-code them):
+
+| Idris | Runtime value |
+|---|---|
+| `Bool`, `Ordering` | integer: False 0 / True 1; LT 0, EQ 1, GT 2 |
+| `Nat` (and Nat-shaped types) | `Integer` |
+| `List`, `Vect` | `Con[0]` / `Con[1, x, xs]` (`_builtin.NIL`/`CONS`) |
+| pairs `(a, b)` | `Con[1, a, b]`; `(a, b, c)` nests right |
+| `Maybe` | `Con[0]` / `Con[1, x]` |
+| `()` | `WolfdrisRT`erased` |
+| `Char` | integer code point |
+
+**Pieces:**
+- `support/wolfram/runtime.wl`, "Marshalling": `toWL[desc, v]` and
+  `fromWL[desc, e]` / `fromWLMaybe`, driven by a **descriptor** of the
+  Idris type (`dInteger[]`, `dList[d]`, `dVect[n, d]`, `dPair[d1, d2]`,
+  `dFun[d1, d2]`, `dFun2[…]`, …). `fromWL` checks the shape and crashes
+  with `ERROR: fromWL: expected List Integer, got {1, 2, x} (Integer
+  expected, got x)`; `Int` is range-checked, not wrapped; Doubles are
+  normalised through `toDouble` (`Total` can return a bignum or exact `0`).
+  Idris functions become `callback[d1, d2, c]` heads (SubValues — applying
+  a `Function` would walk the captured environment every call).
+- Package **`wolfram`** (`lib/`, installed into `~/.idris2` by
+  `scripts/build.sh`; programs use `-p wolfram`):
+  `Wolfram.FFI` — opaque `WLExpr` (with `Show`, InputForm), phantom-typed
+  `Desc a`, `interface Marshal a where desc : Desc a` (instances: `Integer`,
+  `Int`, `Nat`, `Double`, `String`, `Char`, `Bool`, `WLExpr`, `List`,
+  `Vect n` (needs `n` at run time), pairs, `a -> b` to WL only),
+  `toWL`/`fromWL`/`fromWLMaybe`, `fun2`, `withLengthOf`.
+  `Wolfram.List` — `wlSelect`, `wlMap`, `wlSort`, `wlLength`, `wlTotal`.
+- A wrapper is a `%foreign "wolfram:Select"` over `WLExpr` plus a few
+  lines of Idris; lengths are re-established by `fromList` (measured) or
+  `withLengthOf` (checked against the input, so callers don't need `n` at
+  run time).
+- Codegen: on the `wolfram:` path, `emitForeign` drops erased `Type`
+  arguments (foreign defs keep implicits like `{0 a : Type}`). Other
+  erased implicits (e.g. `{0 n : Nat}`) are **not** dropped — they'd reach
+  WL as `erased` — so foreign signatures avoid them (`prim__dVect` is typed
+  as a List descriptor and retyped with `believe_me`; `Desc` is phantom).
+- `wlSort` always passes the Idris `compare` (as 1/0/−1): WL's canonical
+  order differs (`"a" < "B"`, `-Infinity` after numbers). WL `Sort` with an
+  ordering function is stable (checked on 5,000 keys), so it matches
+  `Data.List.sort` exactly.
+- `wlTotal` only for `Integer` and `Double` (`WLNum`): WL's exact sum
+  doesn't wrap, so it would disagree with Idris `sum` on fixed-width ints.
+- Deferred (agreed): WL-side handles (`WLVect n a`) that skip conversion
+  between chained calls. Add when a program needs it.
+
+**WL fact found here — walking a deep list through a variable can turn
+quadratic.** `While[…, x = x[[3]]]` over a 30,000-cell `Con` list
+usually takes 0.2 s, but sometimes stalls for minutes: after some
+kernel-internal event (not identified; it happened at random, and after
+a `Pause`), every access to the variable re-evaluates the whole remaining
+list. Keeping the list inside `Hold` (`h = Extract[h, {1, 3}, Hold]`)
+never stalled (0.25 s per 100,000). `conToList` (also used by `pack` /
+`concat`) now walks that way. **Open question:** generated code touches
+long-lived lists the same way (`Switch[s[[1]], …]` on a list held by a
+caller); this may explain some of the "speed" conformance failures.
 
 ### Primary reference: the in-tree JavaScript backend
 
@@ -373,8 +440,9 @@ wrappers to primitive element types.
    **96/108 pass**; after step 4: **97/108**. Remaining buckets: speed,
    `Data.Buffer` (mechanical), processes (`system`/`popen`, needs a
    Windows-vs-WSL shell decision first).
-3. **FFI + first wrappers.** Marshalling both directions; `Total`, `Map`,
-   `Select`, `Length`, `Sort`.
+3. ✅ **Done 2026-10-24** — **FFI + first wrappers.** Marshalling both
+   directions; `Total`, `Map`, `Select`, `Length`, `Sort`. See "FFI
+   marshalling".
 4. ✅ **Done 2026-10-24 (before step 3)** — **Deep recursion / tail calls.**
    Full CPS + closure conversion; see "CPS + closure conversion".
 5. **Grow the wrapper library** as real programs demand it. Mining notes:
@@ -562,7 +630,7 @@ All inside WSL, from the repo (`/mnt/c/localDocs/Repos/Wolfdris`):
 # one-time: Idris 2 v0.8.0 + compiler API (see Setup below)
 scripts/build-idris.sh
 
-# build the backend -> build/exec/wolfdris
+# build the backend -> build/exec/wolfdris, and install the wolfram package
 scripts/build.sh
 
 # compile a program -> build/exec/foo.wl (wrapper sets IDRIS2_DATA)
@@ -592,6 +660,10 @@ so as not to kill a live run.
 Test layout: `tests/<name>/Main.idr`, plus an optional `tests/<name>/input`
 piped to both programs as stdin; the script compiles with chez and
 Wolfdris, strips `\r`, diffs stdout. To add a test, add a directory.
+**Golden tests:** if `tests/<name>/expected` exists, chez is skipped (it
+can't run `wolfram:` foreigns), the program is compiled with `-p wolfram`,
+and its output is diffed against that file. Make them self-checking where
+possible (`wlSort xs == sort xs`).
 Idris test-writing gotchas: float literals need a `.` (`1.0e9`, not `1e9`);
 unannotated literals default to `Integer`; long tuples of overloaded
 literals hit the ambiguity-depth limit — use typed lists.

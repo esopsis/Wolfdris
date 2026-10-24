@@ -1,0 +1,31 @@
+{1, 2, 3}
+{True, False}
+{{1, "a"}, {2, "b"}}
+{{1}, {}, {2, 3}}
+{1.5, -0.25}
+{"a", "b"}
+{}
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+True
+0.3333333333333333
++inf.0
+0.0
+[1, 2, 3, 4, 5]
+Nothing
+Nothing
+Just [1, 2, 3]
+Nothing
+Nothing
+Nothing
+Just True
+Nothing
+Just (1, 2)

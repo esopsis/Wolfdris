@@ -1,0 +1,9 @@
+package wolfram
+version = 0.1.0
+brief = "Typed wrappers around the Wolfram Language, for the Wolfdris backend"
+
+sourcedir = "src"
+depends = base
+
+modules = Wolfram.FFI
+        , Wolfram.List

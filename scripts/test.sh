@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Differential tests: compile each tests/<name>/Main.idr with chez and with
-# Wolfdris, run both, and diff stdout. Run inside WSL/Linux after
-# scripts/build.sh. Usage: scripts/test.sh [name...]
+# Wolfdris, run both, and diff stdout. A test with a tests/<name>/expected
+# file is a golden test instead: wolfram only (with the wolfram package),
+# diffed against that file. Run inside WSL/Linux after scripts/build.sh.
+# Usage: scripts/test.sh [name...]
 set -uo pipefail
 export PATH="$HOME/.idris2/bin:$PATH"
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -16,16 +18,23 @@ for name in "${names[@]}"; do
   dir="$repo/tests/$name"
   cd "$dir" || { echo "FAIL $name (no such test)"; fail=$((fail+1)); failed+=("$name"); continue; }
   rm -rf build
-  if ! idris2 --cg chez Main.idr -o chez_main > build_chez.log 2>&1; then
-    echo "FAIL $name (chez compile)"; cat build_chez.log
-    fail=$((fail+1)); failed+=("$name"); continue
-  fi
   # Optional tests/<name>/input is piped to both programs as stdin.
   input=/dev/null; [ -f input ] && input=input
-  ./build/exec/chez_main < "$input" > expected.out 2>&1
+  if [ -f expected ]; then
+    # Golden test: programs using the wolfram package can't run on chez.
+    cp expected expected.out
+    pkgs=(-p wolfram)
+  else
+    if ! idris2 --cg chez Main.idr -o chez_main > build_chez.log 2>&1; then
+      echo "FAIL $name (chez compile)"; cat build_chez.log
+      fail=$((fail+1)); failed+=("$name"); continue
+    fi
+    ./build/exec/chez_main < "$input" > expected.out 2>&1
+    pkgs=()
+  fi
   # The Idris driver exits 0 when code generation fails, so also check
   # that the output file exists.
-  if ! "$repo/scripts/wolfdris" --cg wolfram Main.idr -o main > build_wl.log 2>&1 \
+  if ! "$repo/scripts/wolfdris" "${pkgs[@]}" --cg wolfram Main.idr -o main > build_wl.log 2>&1 \
      || [ ! -f build/exec/main.wl ]; then
     echo "FAIL $name (wolfdris compile)"; cat build_wl.log
     fail=$((fail+1)); failed+=("$name"); continue

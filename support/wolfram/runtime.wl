@@ -503,10 +503,86 @@ arraySet[Arr[i_], k_, v_] := If[0 <= k < Length[arrays[i]],
 osName[] := Switch[$OperatingSystem, "Windows", "windows", "MacOSX", "darwin", _, "unix"];
 
 (* Idris List <-> WL list, iteratively so long lists don't hit the
-   recursion limit. Nil is Con[0], cons is Con[1, head, tail]. *)
-conToList[l_] := Module[{x = l},
-  Join @@ Reap[While[x[[1]] === 1, Sow[x[[2]]]; x = x[[3]]]][[2]]];
+   recursion limit. Nil is Con[0], cons is Con[1, head, tail].
+   The rest of the list is only ever held, never evaluated: walking it
+   through a plain variable (x = x[[3]]) sometimes turns quadratic, as
+   every access re-evaluates the whole remaining list (seen on 15.1: a
+   30,000-element walk stalled for minutes at random, while a held walk
+   stayed at ~0.25 s per 100,000 elements). Returns $Failed if l isn't a
+   proper list. *)
+conToList[l_] := Module[{h = Hold[l]},
+  Replace[
+    Reap[While[MatchQ[h, Hold[Con[1, _, _]]],
+      Sow[Extract[h, {1, 2}]]; h = Extract[h, {1, 3}, Hold]]],
+    {r_, s_} :> If[MatchQ[h, Hold[Con[0]]], Join @@ s, $Failed]]];
 listToCon[xs_List] := Fold[Con[1, #2, #1] &, Con[0], Reverse[xs]];
+
+(* ---- Marshalling: Idris values <-> plain WL (Wolfram.FFI) ---- *)
+(* Conversion is driven by a descriptor of the Idris type, built by the
+   wolfram package: dInteger[], dInt[], dNat[], dDouble[], dString[],
+   dChar[], dBool[], dExpr[] (any WL expression, passed as is), dList[d],
+   dVect[n, d], dPair[d1, d2], dFun[d1, d2], dFun2[d1, d2, d3]. Runtime
+   shapes (see CLAUDE.md): Bool is 0/1, Nat an Integer, List/Vect/pairs are
+   Con[0] / Con[1, x, y], Char a code point. *)
+idDescQ[d_] := MatchQ[d, dInteger[] | dInt[] | dNat[] | dDouble[] | dString[] | dExpr[]];
+
+descName[d_] := Replace[d, {
+  dInteger[] -> "Integer", dInt[] -> "Int", dNat[] -> "Nat", dDouble[] -> "Double",
+  dString[] -> "String", dChar[] -> "Char", dBool[] -> "Bool", dExpr[] -> "WLExpr",
+  dList[e_] :> "List " <> descArg[e],
+  dVect[n_, e_] :> "Vect " <> IntegerString[n] <> " " <> descArg[e],
+  dPair[a_, b_] :> "(" <> descName[a] <> ", " <> descName[b] <> ")",
+  dFun[a_, b_] :> descArg[a] <> " -> " <> descName[b],
+  dFun2[a_, b_, c_] :> descArg[a] <> " -> " <> descArg[b] <> " -> " <> descName[c],
+  _ :> ToString[d, InputForm]}];
+descArg[d : (dList | dVect | dFun | dFun2)[___]] := "(" <> descName[d] <> ")";
+descArg[d_] := descName[d];
+
+exprString[e_] := ToString[e, InputForm];
+shortForm[e_] := With[{s = ToString[e, InputForm]},
+  If[StringLength[s] > 60, StringTake[s, 57] <> "...", s]];
+
+(* Idris -> WL. Values come from type-checked Idris code, so a mismatch
+   here is a bug in the wrapper library or the runtime. *)
+toWL[d_?idDescQ, v_] := v;
+toWL[dChar[], c_] := FromCharacterCode[c];
+toWL[dBool[], b_] := b === 1;
+toWL[(dList[d_] | dVect[_, d_]), v_] := toWLList[d, conToList[v]];
+toWL[dPair[d1_, d2_], Con[1, a_, b_]] := {toWL[d1, a], toWL[d2, b]};
+(* Idris closures become WL functions. Heads with SubValues, not Function:
+   applying a Function walks its body, which holds the closure and all it
+   captures (see "CPS + closure conversion" in CLAUDE.md). *)
+toWL[dFun[d1_, d2_], c_] := callback[d1, d2, c];
+toWL[dFun2[d1_, d2_, d3_], c_] := callback2[d1, d2, d3, c];
+toWL[d_, v_] := crash["toWL: can't convert to " <> descName[d] <> ": " <> shortForm[v]];
+toWLList[_, $Failed] := crash["toWL: not a list"];
+toWLList[d_?idDescQ, xs_] := xs;
+toWLList[d_, xs_] := Map[toWL[d, #] &, xs];
+
+callback[d1_, d2_, c_][x_] := toWL[d2, c[fromWL[d1, x], idK]];
+callback2[d1_, d2_, d3_, c_][x_, y_] := toWL[d3, c[fromWL[d1, x], idK][fromWL[d2, y], idK]];
+
+(* WL -> Idris, checking the shape: WL results are where wrong types get
+   in, so a mismatch crashes (fromWL) or gives Nothing (fromWLMaybe). *)
+conv[dInteger[], e_Integer] := e;
+conv[dInt[], e_Integer] /; -2^63 <= e < 2^63 := e;
+conv[dNat[], e_Integer] /; e >= 0 := e;
+conv[dDouble[], e : (_Real | _Integer | _Rational | Infinity | -Infinity | Indeterminate)] := toDouble[e];
+conv[dString[], e_String] := e;
+conv[dChar[], e_String] /; StringLength[e] == 1 := First[ToCharacterCode[e]];
+conv[dBool[], True] := 1;
+conv[dBool[], False] := 0;
+conv[dExpr[], e_] := e;
+conv[dList[d_], e_List] := listToCon[convList[d, e]];
+conv[dVect[n_, d_], e_List] /; Length[e] == n := listToCon[convList[d, e]];
+conv[dPair[d1_, d2_], {a_, b_}] := Con[1, conv[d1, a], conv[d2, b]];
+conv[d_, e_] := Throw[{d, e}, convFail];
+convList[d_, e_] := Map[conv[d, #] &, e];
+
+fromWL[d_, e_] := Catch[conv[d, e], convFail, convCrash[d, e]];
+convCrash[d_, e_][{d1_, e1_}, _] := crash["fromWL: expected " <> descName[d] <> ", got " <> shortForm[e]
+  <> If[d1 === d, "", " (" <> descName[d1] <> " expected, got " <> shortForm[e1] <> ")"]];
+fromWLMaybe[d_, e_] := Catch[Con[1, conv[d, e]], convFail, Con[0] &];
 
 fastPack[l_] := FromCharacterCode[conToList[l]];
 fastUnpack[s_] := listToCon[ToCharacterCode[s]];
