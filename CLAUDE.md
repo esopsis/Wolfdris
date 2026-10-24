@@ -161,7 +161,8 @@ Code: `src/Wolfdris/{Codegen,Emit,Mangle,Foreign}.idr`, runtime
   `WolfdrisRT`op["Add", "Int64"][a, b]` generically; the runtime ends with
   a catch-all `op[keys__][___] := crash["not implemented: …"]`. A missing
   primitive therefore fails loudly — separate per-op symbols would stay
-  unevaluated and give silent wrong answers. Revisit for speed later.
+  unevaluated and give silent wrong answers. Ops that need no wrapping
+  are inlined as plain WL instead (see "Speed").
   `BelieveMe` and `Crash` are emitted directly.
 - **Foreign table** (`Foreign.idr`, keyed by full Idris name) → runtime
   function, then a `wolfram:<Fn>` spec (called without world args), else a
@@ -350,9 +351,38 @@ kernel-internal event (not identified; it happened at random, and after
 a `Pause`), every access to the variable re-evaluates the whole remaining
 list. Keeping the list inside `Hold` (`h = Extract[h, {1, 3}, Hold]`)
 never stalled (0.25 s per 100,000). `conToList` (also used by `pack` /
-`concat`) now walks that way. **Open question:** generated code touches
-long-lived lists the same way (`Switch[s[[1]], …]` on a list held by a
-caller); this may explain some of the "speed" conformance failures.
+`concat`) now walks that way. **Checked in the speed step:**
+generated-code-style walks (pattern-substituted argument, `Switch[s[[1]],
+…]` tail call, also from a long-lived global) never stalled in 32 runs,
+and the slow conformance tests scale linearly, so this is not what makes
+them slow. The trigger is still unknown.
+
+### Speed (2026-10-24)
+
+Measured on the three "too slow" conformance tests (scaled-down copies,
+`scripts/profile.sh` for call counts):
+- **~14 s of every run is the WL kernel starting** (`wolframscript -code 1`
+  alone takes that long). Every test pays it.
+- **Cost is per-call overhead, linear in the work.** Rough WL 15.1 costs
+  per iteration of a CPS loop: bare tail call 1.25 µs, extra lifted call
+  1.85, continuation closure 2.8, constructor + `Switch` 3.7. The tests
+  make ~15 calls per list cell (bind001), ~120 per pair check (newints),
+  ~2,700 per character (json_001's lexer).
+- **Fixed: Int wrapping recomputed `2^63` and `2^64` on every call** —
+  29 µs per Int64 op vs 1.2 µs with constants computed once per width
+  (`wrapS`/`wrapU` in the runtime) plus an in-range fast path.
+- **Done: unbounded primitives are inlined** (`inlineOp` in `Emit.idr`):
+  Integer `+ - *`, Neg and bitwise ops on all integer types, integer/Char
+  comparisons, String `==`, `StrAppend`, `StrLength`. A table call costs
+  ~0.9 µs more. Every inlined form computes exactly what the runtime's
+  `op` definition does; everything else still goes through the table,
+  whose catch-all crashes.
+- Result: newints-style work ~2× faster, json ~1.3×, bind ~1.1×; full
+  newints estimated ~340 s, json_001 ~530 s; bind001 now passes in conformance.
+- **Not done (decided with the user): direct style for non-recursive
+  leaf functions** (~1.35 µs saved per call, est. 1.3–1.5× more). Do it
+  together with readable mode, or when a real program needs the speed:
+  it's the same hook (see "Readable WL output").
 
 ### Primary reference: the in-tree JavaScript backend
 
@@ -437,7 +467,7 @@ wrappers to primitive element types.
    stdin, IORefs/arrays done; 8/8 differential tests pass.
    **Conformance 2026-10-22:** Idris's own test suite runs against us
    (`scripts/conformance.sh`, [docs/conformance.md](docs/conformance.md)):
-   **96/108 pass**; after step 4: **97/108**. Remaining buckets: speed,
+   **96/108 pass**; after step 4: **97/108**; after the speed work: **98/108** (bind001 passes). Remaining buckets: speed,
    `Data.Buffer` (mechanical), processes (`system`/`popen`, needs a
    Windows-vs-WSL shell decision first).
 3. ✅ **Done 2026-10-24** — **FFI + first wrappers.** Marshalling both
@@ -647,6 +677,9 @@ scripts/conformance.sh [--only "chez/chez001 base/data_list001"]
 
 # any long run: stop and report if output and CPU stop moving
 scripts/watch.sh --stall 300 -- scripts/conformance.sh
+
+# where does a slow program spend its calls? (counts per function / primitive)
+scripts/profile.sh build/exec/foo.wl [args...]
 ```
 
 **Long runs: never wait silently.** Run long jobs under

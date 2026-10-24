@@ -73,8 +73,13 @@ signedBits = <|"Int" -> 64, "Int8" -> 8, "Int16" -> 16, "Int32" -> 32, "Int64" -
 unsignedBits = <|"Bits8" -> 8, "Bits16" -> 16, "Bits32" -> 32, "Bits64" -> 64|>;
 intTypes = Join[{"Integer"}, Keys[signedBits], Keys[unsignedBits]];
 
-wrapS[n_][x_] := Mod[x + 2^(n - 1), 2^n] - 2^(n - 1);
-wrapU[n_][x_] := Mod[x, 2^n];
+(* Constants computed once per width: computing 2^63 on every call made
+   each Int op ~25x slower (29 us vs 1.2 us on 15.1). Values already in
+   range skip Mod. *)
+Scan[With[{n = #, h = 2^(# - 1), m = 2^#},
+    wrapS[n][x_] := If[-h <= x < h, x, Mod[x + h, m] - h];
+    wrapU[n][x_] := If[0 <= x < m, x, Mod[x, m]]] &,
+  {8, 16, 32, 64}];
 wrap["Integer"] = Identity;
 KeyValueMap[(wrap[#1] = wrapS[#2]) &, signedBits];
 KeyValueMap[(wrap[#1] = wrapU[#2]) &, unsignedBits];

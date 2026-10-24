@@ -30,6 +30,49 @@ fresh = do i <- get Fresh
 commas : List String -> String
 commas = joinBy ", "
 
+||| Primitives emitted as plain WL instead of a call into the runtime's
+||| table: a table call costs ~0.9 us more per use (WL 15.1). Each entry
+||| must compute exactly what the runtime's op definition does; only ops
+||| that need no wrapping, zero check or Double handling qualify. Anything
+||| else goes through the table, whose catch-all crashes.
+inlineOp : List String -> List String -> Maybe String
+inlineOp keys args = case (keys, args) of
+    (["Add", "Integer"], [a, b]) => fn "Plus" [a, b]
+    (["Sub", "Integer"], [a, b]) => fn "Subtract" [a, b]
+    (["Mul", "Integer"], [a, b]) => fn "Times" [a, b]
+    -- chez doesn't wrap Neg; the bitwise ops never wrap
+    (["Neg", ty], [a]) => ifInt ty (fn "Minus" [a])
+    (["BAnd", ty], [a, b]) => ifInt ty (fn "BitAnd" [a, b])
+    (["BOr", ty], [a, b]) => ifInt ty (fn "BitOr" [a, b])
+    (["BXOr", ty], [a, b]) => ifInt ty (fn "BitXor" [a, b])
+    (["LT", ty], [a, b]) => ifCmp ty "Less" a b
+    (["LTE", ty], [a, b]) => ifCmp ty "LessEqual" a b
+    (["EQ", "String"], [a, b]) => cmp "SameQ" a b
+    (["EQ", ty], [a, b]) => ifCmp ty "Equal" a b
+    (["GTE", ty], [a, b]) => ifCmp ty "GreaterEqual" a b
+    (["GT", ty], [a, b]) => ifCmp ty "Greater" a b
+    (["StrAppend"], [a, b]) => fn "StringJoin" [a, b]
+    (["StrLength"], [a]) => fn "StringLength" [a]
+    _ => Nothing
+  where
+    intTypes : List String
+    intTypes = ["Integer", "Int", "Int8", "Int16", "Int32", "Int64",
+                "Bits8", "Bits16", "Bits32", "Bits64"]
+
+    fn : String -> List String -> Maybe String
+    fn f as = Just $ f ++ "[" ++ commas as ++ "]"
+
+    cmp : String -> String -> String -> Maybe String
+    cmp f a b = Just $ "Boole[" ++ f ++ "[" ++ a ++ ", " ++ b ++ "]]"
+
+    ifInt : String -> Maybe String -> Maybe String
+    ifInt ty e = if ty `elem` intTypes then e else Nothing
+
+    -- integer and Char comparisons are exact; Double and String ones aren't
+    -- plain WL (tolerance, code-point order)
+    ifCmp : String -> String -> String -> String -> Maybe String
+    ifCmp ty f a b = if ty `elem` ("Char" :: intTypes) then cmp f a b else Nothing
+
 ||| Keys of the runtime's primitive table: WolfdrisRT`op[keys...][args...].
 opKeys : PrimFn arity -> List String
 opKeys (Add ty) = ["Add", show ty]
@@ -314,7 +357,9 @@ mutual
       = cps msg $ Meta $ \m => pure $ rt "crash[" ++ m ++ "]"
   cps (NmOp _ op args) c
       = cpsList (toList args) $ \vs =>
-          apply c (rt "op[" ++ commas (map wlString (opKeys op)) ++ "][" ++ commas vs ++ "]")
+          apply c $ fromMaybe
+            (rt "op[" ++ commas (map wlString (opKeys op)) ++ "][" ++ commas vs ++ "]")
+            (inlineOp (opKeys op) vs)
   -- Effectful (IORefs, arrays, getChar): evaluate now, so effects keep
   -- their order relative to later calls.
   cps (NmExtPrim _ p args) c

@@ -1,5 +1,5 @@
 # Idris 2 tests expected to FAIL under wolfram (scripts/conformance.sh compares against this).
-# 2026-10-24 (CPS): 97/108 pass. Buckets in docs/conformance.md.
+# 2026-10-24 (speed): 98/108 pass. Buckets in docs/conformance.md.
 allbackends/popen2
 base/system_file_copyFile
 base/system_file_popen
@@ -10,4 +10,3 @@ chez/newints
 contrib/json_001
 contrib/system_directory_tree_copyDir
 idris2/misc/golden001
-prelude/bind001
