@@ -1,0 +1,20 @@
+added contexts: {"PolyFit`", "PolyFit2`"}
+usage: "fit[d, xs, ys] fits a degree-d polynomial to the points (xs, ys); coefficients lowest degree first."
+fit: {3, -5/2, -3/2, 1}
+roots: {-3/2, 1, 2}
+complex roots: {-I, I}
+heads: {Complex, Complex}
+solve: {2, 3, -1}
+greet: True
+no solution: Failure["IdrisError", <|"MessageTemplate" -> "no solution"|>]
+not square: Failure["IdrisError", <|"MessageTemplate" -> "the matrix must have as many rows as b"|>]
+lengths differ: Failure["IdrisError", <|"MessageTemplate" -> "xs and ys differ in length"|>]
+leading zero: Failure["IdrisError", <|"MessageTemplate" -> "the leading coefficient is 0"|>]
+arity: Failure["IdrisError", <|"MessageTemplate" -> "fit expects 3 arguments, got 2"|>]
+wrong type: Failure["IdrisError", <|"MessageTemplate" -> "fromWL: expected Nat, got -1"|>]
+wrong element: Failure["IdrisError", <|"MessageTemplate" -> "fromWL: expected List Double, got {1., \"a\"} (Double expected, got \"a\")"|>]
+crash: Failure["IdrisError", <|"MessageTemplate" -> "boom!"|>]
+after the crash: 0
+deep recursion: 5000050000
+second paclet: 55
+globals unchanged: True

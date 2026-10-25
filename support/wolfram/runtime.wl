@@ -3,12 +3,18 @@
    Semantics follow the Idris 2 chez backend (support/chez/support.ss and
    src/Compiler/Scheme/Common.idr in Idris 2 v0.8.0). *)
 
-$HistoryLength = 0;
-(* Tail calls in If/With/Switch/Function count against $IterationLimit
-   instead of growing the stack, so it must be unlimited. *)
-$IterationLimit = Infinity;
-(* Without this, wolframscript prints non-ASCII as \[Name] escapes. *)
-SetOptions[$Output, CharacterEncoding -> "UTF-8"];
+(* Library mode (a paclet loaded into someone's kernel; the codegen sets
+   WolfdrisRT`$library first): no global settings, no Exit. Each call from
+   WL runs in callIdris, which sets the limits locally and turns crashes
+   into Failure objects. Script mode (a program run by wolframscript) sets
+   everything globally. *)
+If[!TrueQ[WolfdrisRT`$library],
+  $HistoryLength = 0;
+  (* Tail calls in If/With/Switch/Function count against $IterationLimit
+     instead of growing the stack, so it must be unlimited. *)
+  $IterationLimit = Infinity;
+  (* Without this, wolframscript prints non-ASCII as \[Name] escapes. *)
+  SetOptions[$Output, CharacterEncoding -> "UTF-8"]];
 
 Begin["WolfdrisRT`"];
 (* With only System` on the path, every name below is created in
@@ -25,7 +31,8 @@ unit = Con[0];
 (* Like chez's blodwen-error-quit: the message on stdout, then exit 1.
    crashRaw is for compiler-generated crashes (NmCrash: impossible cases,
    holes); crash is idris_crash, which chez prefixes with "ERROR: ". *)
-crashRaw[msg_String] := (WriteString[$Output, msg <> "\n"]; Exit[1]);
+crashRaw[msg_String] := If[TrueQ[$library], Throw[msg, idrisCrash],
+  WriteString[$Output, msg <> "\n"]; Exit[1]];
 crashRaw[msg_] := crashRaw[ToString[msg]];
 crash[msg_String] := crashRaw["ERROR: " <> msg];
 crash[msg_] := crash[ToString[msg]];
@@ -48,14 +55,18 @@ Clo[f_, c___][a___] := f[c, a];
    is about half the largest limit measured to fail cleanly for every code
    shape tried; past ~40000 some shapes overflow the C stack and the kernel
    dies instead. *)
-$RecursionLimit = 10000;
+recursionLimit = 10000;
 overflowed = False;
+inCall = False;
+(* In library mode, only overflows inside Idris code are ours *)
 overflowHandler[Hold[Message[$RecursionLimit::reclim | $RecursionLimit::reclim2, ___], _]] :=
-  (overflowed = True; Abort[]);
+  If[!TrueQ[$library] || inCall, overflowed = True; Abort[]];
 Internal`AddHandler["Message", overflowHandler];
-(* WL's own messages would end up in the program's output (wolframscript
-   merges stderr into stdout); set WOLFDRIS_DEBUG to see them. *)
-If[!StringQ[Environment["WOLFDRIS_DEBUG"]], $Messages = {}];
+If[!TrueQ[$library],
+  $RecursionLimit = recursionLimit;
+  (* WL's own messages would end up in the program's output (wolframscript
+     merges stderr into stdout); set WOLFDRIS_DEBUG to see them. *)
+  If[!StringQ[Environment["WOLFDRIS_DEBUG"]], $Messages = {}]];
 
 (* WOLFDRIS_TIMEOUT (seconds) is enforced here, inside the kernel: killing
    wolframscript from WSL (e.g. with `timeout`) leaves the Windows kernel
@@ -67,6 +78,23 @@ SetAttributes[runMain, HoldAll];
 runMain[main_] := CheckAbort[
   TimeConstrained[main;, timeLimit[], crash["time limit exceeded"]],
   If[overflowed, crash["stack overflow (recursion too deep)"], crashRaw["aborted"]]];
+
+(* Library mode: running main registers the exports (Wolfram.Export). *)
+SetAttributes[runLibrary, HoldAll];
+runLibrary[main_] := callIdris[main;];
+
+(* Run Idris code called from WL: the limits generated code needs, WL's
+   messages hidden (as in script mode), and crashes, exit and overflows as
+   a Failure, so the caller's kernel survives. A user's abort still
+   aborts. *)
+SetAttributes[callIdris, HoldAll];
+callIdris[e_] := Block[{$IterationLimit = Infinity, $RecursionLimit = recursionLimit,
+    $Messages = {}, inCall = True, overflowed = False},
+  CheckAbort[
+    Catch[e, idrisCrash, idrisFailure[#1] &],
+    If[overflowed, idrisFailure["stack overflow (recursion too deep)"], Abort[]]]];
+idrisFailure[msg_String] := Failure["IdrisError",
+  <|"MessageTemplate" -> StringDelete[msg, StartOfString ~~ "ERROR: "]|>];
 
 (* ---- Integer types ---- *)
 signedBits = <|"Int" -> 64, "Int8" -> 8, "Int16" -> 16, "Int32" -> 32, "Int64" -> 64|>;
@@ -451,7 +479,8 @@ dirEntry[Dir[i_], _] := If[dentries[i] === {}, nullPtr,
 closeDir[Dir[_], _] := unit;
 
 (* ---- System ---- *)
-exit[code_, _] := Exit[code];
+exit[code_, _] := If[TrueQ[$library],
+  Throw["the program exited with code " <> ToString[code], idrisCrash], Exit[code]];
 (* argv: {script, args...}. wolframscript drops arguments starting with "-",
    so scripts/run-wl passes them in WOLFDRIS_ARGS (base64 of NUL-terminated
    UTF-8 strings; "-" for none). Otherwise fall back to $ScriptCommandLine. *)
@@ -540,8 +569,10 @@ descName[d_] := Replace[d, {
   dPair[a_, b_] :> "(" <> descName[a] <> ", " <> descName[b] <> ")",
   dFun[a_, b_] :> descArg[a] <> " -> " <> descName[b],
   dFun2[a_, b_, c_] :> descArg[a] <> " -> " <> descArg[b] <> " -> " <> descName[c],
+  dFunN[as_List, r_] :> StringRiffle[Append[descArg /@ as, descName[r]], " -> "],
+  dEither[e_] :> "Either String " <> descArg[e],
   _ :> ToString[d, InputForm]}];
-descArg[d : (dList | dVect | dFun | dFun2)[___]] := "(" <> descName[d] <> ")";
+descArg[d : (dList | dVect | dFun | dFun2 | dFunN | dEither)[___]] := "(" <> descName[d] <> ")";
 descArg[d_] := descName[d];
 
 exprString[e_] := ToString[e, InputForm];
@@ -562,6 +593,11 @@ toWL[dComplex[], Con[1, a_, b_]] := Complex[a, b];
    captures (see "CPS + closure conversion" in CLAUDE.md). *)
 toWL[dFun[d1_, d2_], c_] := callback[d1, d2, c];
 toWL[dFun2[d1_, d2_, d3_], c_] := callback2[d1, d2, d3, c];
+toWL[dFunN[ds_List, dr_], c_] := callbackN[ds, dr, c];
+(* Either String a: Left is Con[0, msg], Right is Con[1, v]. A Left
+   becomes the same Failure a crash gives. *)
+toWL[dEither[_], Con[0, msg_]] := idrisFailure[msg];
+toWL[dEither[d_], Con[1, v_]] := toWL[d, v];
 toWL[d_, v_] := crash["toWL: can't convert to " <> descName[d] <> ": " <> shortForm[v]];
 toWLList[_, $Failed] := crash["toWL: not a list"];
 toWLList[d_?idDescQ, xs_] := xs;
@@ -569,6 +605,24 @@ toWLList[d_, xs_] := Map[toWL[d, #] &, xs];
 
 callback[d1_, d2_, c_][x_] := toWL[d2, c[fromWL[d1, x], idK]];
 callback2[d1_, d2_, d3_, c_][x_, y_] := toWL[d3, c[fromWL[d1, x], idK][fromWL[d2, y], idK]];
+(* n arguments at once, f[x1, ..., xn]; applying the curried closure one
+   argument at a time *)
+callbackN[ds_, dr_, c_][xs___] /; Length[{xs}] == Length[ds] :=
+  toWL[dr, Fold[#1[#2, idK] &, c, MapThread[fromWL, {ds, {xs}}]]];
+
+(* ---- Exports (Wolfram.Export): Idris functions callable from WL ---- *)
+(* exportSpec[name, usage, arity, callbackN[...]] for each export, defined
+   in the paclet's context ($package, set by the codegen) *)
+defineExports[specs_List] := (Scan[defineExport[$package, #] &, specs]; unit);
+makeExport[name_, usage_, ds_List, dr_, c_] := exportSpec[name, usage, Length[ds], callbackN[ds, dr, c]];
+defineExport[ctx_, exportSpec[name_, usage_, n_, cb_]] := With[{s = Symbol[ctx <> name]},
+  Unprotect[s]; ClearAll[s];
+  s[args___] := callExport[name, n, cb, {args}];
+  MessageName[s, "usage"] = usage;];
+callExport[name_, n_, cb_, args_List] := If[Length[args] =!= n,
+  idrisFailure[name <> " expects " <> ToString[n] <> " argument" <> If[n == 1, "", "s"]
+    <> ", got " <> ToString[Length[args]]],
+  callIdris[cb @@ args]];
 
 (* WL -> Idris, checking the shape: WL results are where wrong types get
    in, so a mismatch crashes (fromWL) or gives Nothing (fromWLMaybe). *)
@@ -584,6 +638,8 @@ conv[dExpr[], e_] := e;
 conv[dList[d_], e_List] := listToCon[convList[d, e]];
 conv[dVect[n_, d_], e_List] /; Length[e] == n := listToCon[convList[d, e]];
 conv[dPair[d1_, d2_], {a_, b_}] := Con[1, conv[d1, a], conv[d2, b]];
+conv[dEither[_], Failure[_, a_Association]] := Con[0, ToString[Lookup[a, "MessageTemplate", "failure"]]];
+conv[dEither[d_], e_] := Con[1, conv[d, e]];
 (* real numbers are complex numbers with imaginary part 0 *)
 conv[dComplex[], Complex[a_, b_]] := Con[1, conv[dDouble[], a], conv[dDouble[], b]];
 conv[dComplex[], e_] := Con[1, conv[dDouble[], e], 0.];

@@ -432,12 +432,14 @@ mutual
   defaultBranch (Just d) c = cps d c
   defaultBranch Nothing _ = pure $ rt "crashRaw[" ++ wlString "unmatched case" ++ "]"
 
-||| The program's entry: run main with the identity continuation, under the
-||| runtime's stack-overflow backstop.
+||| The program's entry: run main with the identity continuation, through a
+||| runtime runner (runMain, or runLibrary for a paclet) that provides the
+||| stack-overflow backstop.
 export
 emitMain : {auto f : Ref Fresh Int} -> {auto l : Ref LiftedDefs (List String)} ->
-           {auto s : Ref InScope (List (Maybe Name, String))} -> NamedCExp -> Core String
-emitMain e = pure $ rt "runMain[" ++ !(cps e (Obj idK)) ++ "]"
+           {auto s : Ref InScope (List (Maybe Name, String))} ->
+           (runner : String) -> NamedCExp -> Core String
+emitMain runner e = pure $ rt runner ++ "[" ++ !(cps e (Obj idK)) ++ "]"
 
 ||| Foreign arguments that carry no value: the world token, and erased type
 ||| arguments (foreign definitions keep their implicits, e.g. `{0 a : Type}`).

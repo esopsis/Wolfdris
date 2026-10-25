@@ -8,3 +8,4 @@ depends = base
 modules = Wolfram.FFI
         , Wolfram.List
         , Wolfram.LinAlg
+        , Wolfram.Export

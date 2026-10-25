@@ -85,6 +85,9 @@ prim__dFun : Desc a -> Desc b -> Desc (a -> b)
 %foreign "wolfram:WolfdrisRT`dFun2"
 prim__dFun2 : Desc a -> Desc b -> Desc c -> Desc (a -> b -> c)
 
+%foreign "wolfram:WolfdrisRT`dEither"
+prim__dEither : Desc a -> Desc (Either String a)
+
 %foreign "wolfram:WolfdrisRT`toWL"
 prim__toWL : Desc a -> a -> WLExpr
 
@@ -126,11 +129,22 @@ export
 (Marshal a, Marshal b) => Marshal (a, b) where
   desc = prim__dPair desc desc
 
+||| `Right v` is `v` in WL; `Left msg` is `Failure["IdrisError", ...]` with
+||| that message, as a crash gives. From WL, a `Failure` is a `Left`.
+export
+Marshal a => Marshal (Either String a) where
+  desc = prim__dEither desc
+
 ||| Idris to WL only: a WL function of one argument. A curried function
 ||| becomes a curried WL function; see `fun2` for two arguments.
 export
 (Marshal a, Marshal b) => Marshal (a -> b) where
   desc = prim__dFun desc desc
+
+||| The descriptor itself, as a WL expression (for Wolfram.Export).
+export
+descExpr : Desc a -> WLExpr
+descExpr = believe_me
 
 ||| An Idris value as a WL expression.
 export

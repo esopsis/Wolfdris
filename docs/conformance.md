@@ -50,11 +50,11 @@ Step 4 (CPS + closure conversion) removed the recursion-depth failures:
 `contrib/perf001` now passes; the other three no longer overflow but are
 too slow for the 300 s per-program limit.
 
-### Remaining failures (10), by bucket
+### Remaining failures (10–11), by bucket
 
 | Bucket | Tests | What it needs |
 |---|---|---|
-| Too slow (300 s limit) | `contrib/json_001` (`[0 .. 55295]` chars, each round-tripped through JSON), `chez/newints` (33,800-pair checks per op) | General codegen speed. Measured 2026-10-24 (CLAUDE.md "Speed"): linear, per-call overhead plus ~14 s kernel start. After the Int-wrap fix and inlined primitives, estimated full runs: newints ~340 s, json_001 ~530 s; `prelude/bind001` (12.5M list cells) now passes. Next lever: direct style for non-recursive leaf functions (deferred, with readable mode). Was the recursion bucket before step 4. |
+| Too slow (300 s limit) | `contrib/json_001` (`[0 .. 55295]` chars, each round-tripped through JSON), `chez/newints` (33,800-pair checks per op) | General codegen speed. Measured 2026-10-24 (CLAUDE.md "Speed"): linear, per-call overhead plus ~14 s kernel start. After the Int-wrap fix and inlined primitives, estimated full runs: newints ~340 s, json_001 ~530 s; `prelude/bind001` (12.5M list cells) is borderline: 290–330 s against the 300 s limit, so it passes on some runs (kept in the baseline). Next lever: direct style for non-recursive leaf functions (deferred, with readable mode). Was the recursion bucket before step 4. |
 | `Data.Buffer` | `chez/buffer001`, `chez/chez004`, `base/system_file_copyFile`, `contrib/system_directory_tree_copyDir` | ~28 scheme-only buffer foreigns (`Data.Buffer`, `System.File.Buffer`): a mutable byte store with typed get/set and file read/write. Mechanical. |
 | Processes | `base/system_run`, `base/system_file_popen`, `allbackends/popen2`, `idris2/misc/golden001` (its runner calls `system`) | `system`/`popen`/`popen2`. Design question first: the kernel runs on Windows, the user's shell is WSL — whose shell should `system "echo hi"` use? |
 

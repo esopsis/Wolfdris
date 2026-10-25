@@ -143,8 +143,9 @@ Code: `src/Wolfdris/{Codegen,Emit,Mangle,Foreign}.idr`, runtime
 - **One self-contained `.wl` per program, runtime inlined.** The compiler
   reads `wolfram/runtime.wl` via Idris's `readDataFile` (found through
   `IDRIS2_DATA`, set by `scripts/wolfdris`) and pastes it at the top. No
-  run-time paths, no runtime/program version skew. Switch to
-  `Needs["WolfdrisRT`"]` when we build the paclet.
+  run-time paths, no runtime/program version skew. Paclets keep it inlined
+  too, under per-paclet contexts (see "Paclets"), rather than a shared
+  `Needs["WolfdrisRT`"]`: two paclets never disagree about the runtime.
 - **Contexts:** generated symbols are fully qualified in `` WolfdrisGen` ``;
   the runtime lives in `` WolfdrisRT` `` (written inside
   `Begin`/`End`).
@@ -401,7 +402,7 @@ Measured on the three "too slow" conformance tests (scaled-down copies,
   `op` definition does; everything else still goes through the table,
   whose catch-all crashes.
 - Result: newints-style work ~2× faster, json ~1.3×, bind ~1.1×; full
-  newints estimated ~340 s, json_001 ~530 s; bind001 now passes in conformance.
+  newints estimated ~340 s, json_001 ~530 s; bind001 is borderline (290–330 s against the 300 s limit).
 - **Not done (decided with the user): direct style for non-recursive
   leaf functions** (~1.35 µs saved per call, est. 1.3–1.5× more). Do it
   together with readable mode, or when a real program needs the speed:
@@ -490,7 +491,7 @@ wrappers to primitive element types.
    stdin, IORefs/arrays done; 8/8 differential tests pass.
    **Conformance 2026-10-22:** Idris's own test suite runs against us
    (`scripts/conformance.sh`, [docs/conformance.md](docs/conformance.md)):
-   **96/108 pass**; after step 4: **97/108**; after the speed work: **98/108** (bind001 passes). Remaining buckets: speed,
+   **96/108 pass**; after step 4: **97/108**; after the speed work: **97–98/108** (bind001 is borderline at the time limit). Remaining buckets: speed,
    `Data.Buffer` (mechanical), processes (`system`/`popen`, needs a
    Windows-vs-WSL shell decision first).
 3. ✅ **Done 2026-10-24** — **FFI + first wrappers.** Marshalling both
@@ -502,6 +503,8 @@ wrappers to primitive element types.
    [docs/wrapper-mining.md](docs/wrapper-mining.md).
    **First program 2026-10-24:** typed linear algebra + polynomial
    fitting (`Wolfram.LinAlg`, `tests/polyfit`; see "FFI marshalling").
+   **Paclets 2026-10-24:** the same code callable from WL notebooks
+   (`Wolfram.Export`, `scripts/paclet.sh`; see Distribution → "Paclets").
 
 ## The runtime is the bulk of the work
 
@@ -705,6 +708,9 @@ scripts/watch.sh --stall 300 -- scripts/conformance.sh
 
 # where does a slow program spend its calls? (counts per function / primitive)
 scripts/profile.sh build/exec/foo.wl [args...]
+
+# a paclet from a library program (main = Wolfram.Export.library [...])
+scripts/paclet.sh Main.idr Name outdir
 ```
 
 **Long runs: never wait silently.** Run long jobs under
@@ -772,6 +778,45 @@ Asymmetric, and favorably so:
   not tagged constructors.
 - **Building from source**: needs the full Idris chain. Contributors do this;
   users don't.
+
+### Paclets (implemented 2026-10-24)
+
+```idris
+fitEntry : Nat -> List Double -> List Double -> Either String (List Double)
+main = library [ fn3 "fit" "fit[d, xs, ys] fits ..." fitEntry, ... ]
+```
+```bash
+scripts/paclet.sh Main.idr PolyFit outdir      # outdir/PolyFit/{PacletInfo.wl, Kernel/PolyFit.wl}
+```
+```wolfram
+PacletDirectoryLoad["outdir/PolyFit"]; Needs["PolyFit`"]; PolyFit`fit[3, xs, ys]
+```
+- **Exports are registered in `main`** (decided with the user):
+  `Wolfram.Export` — `fn1`/`fn2`/`fn3 name usage f`, `library [...]`.
+  `Marshal` picks every conversion from the real Idris types, so the
+  codegen needs no type knowledge. Rejected: `%export "wolfram:…"` (Idris
+  v0.8.0 has it, only JS uses it; the codegen only sees erased code, so it
+  would have to read types out of the checker's state).
+- **Entry points take plain lists and check them into `Vect`s**
+  (`exactLength`, measuring), returning `Either String a`: `Right v` → `v`,
+  `Left msg` → `Failure["IdrisError", <|"MessageTemplate" -> msg|>]`.
+  Wrong arity, arguments `fromWL` rejects, `idris_crash`, `exit` and stack
+  overflow give the same kind of `Failure`; the kernel carries on.
+- **Library mode** (`--directive library --directive package=Name`, set by
+  `paclet.sh`): the codegen prepends `$library`/`$package`,
+  `BeginPackage["Name`"]; EndPackage[]`, ends with `runLibrary[main]`, and
+  renames `WolfdrisGen`` → `Name`Gen``, `WolfdrisRT`` → `Name`RT`` (all
+  occurrences, strings included — the runtime's own `Begin[...]` and the
+  `wolfram:` specs must follow). So several Idris paclets, even built with
+  different runtimes, load into one kernel (tested). The runtime then sets
+  **no globals** (`$HistoryLength`, `$IterationLimit`, `$RecursionLimit`,
+  `$Messages`, `$Output` options); each call runs in `callIdris`, which
+  `Block`s the limits and `$Messages = {}` and catches crashes. The
+  overflow handler only acts inside calls.
+- Exported functions are pure for now (`IO` results: later).
+- Test: `tests/paclet` (driver mode in `test.sh`: `paclets` lists the
+  names to build, `driver.wl` loads and calls them, output vs `expected`),
+  including globals-unchanged and two-paclets-side-by-side checks.
 
 ## Conventions
 
