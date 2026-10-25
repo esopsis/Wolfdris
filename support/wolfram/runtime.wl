@@ -563,7 +563,7 @@ idDescQ[d_] := MatchQ[d, dInteger[] | dInt[] | dNat[] | dDouble[] | dString[] | 
 descName[d_] := Replace[d, {
   dInteger[] -> "Integer", dInt[] -> "Int", dNat[] -> "Nat", dDouble[] -> "Double",
   dString[] -> "String", dChar[] -> "Char", dBool[] -> "Bool", dExpr[] -> "WLExpr",
-  dComplex[] -> "Complex",
+  dComplex[] -> "Complex", dSym[] -> "Expr",
   dList[e_] :> "List " <> descArg[e],
   dVect[n_, e_] :> "Vect " <> IntegerString[n] <> " " <> descArg[e],
   dPair[a_, b_] :> "(" <> descName[a] <> ", " <> descName[b] <> ")",
@@ -645,6 +645,35 @@ conv[dComplex[], Complex[a_, b_]] := Con[1, conv[dDouble[], a], conv[dDouble[], 
 conv[dComplex[], e_] := Con[1, conv[dDouble[], e], 0.];
 conv[d_, e_] := Throw[{d, e}, convFail];
 convList[d_, e_] := Map[conv[d, #] &, e];
+
+(* Wolfram.Symbolic's Expr: Sym 0 [name] | Var 1 [name] | IntE 2 | RealE 3
+   | Str 4 | App 5 [head, args] | Raw 6 [WL atom]. Every WL expression
+   converts, so this never fails. The program's variables live in
+   WolfdrisVar`, so a user's own x = 5 can't leak in. *)
+toWL[dSym[], e_] := symToWL[e];
+conv[dSym[], e_] := symFrom[e];
+symToWL[Con[0, name_]] := namedSymbol[name];
+symToWL[Con[1, name_]] := If[StringMatchQ[name, RegularExpression["[A-Za-z$][A-Za-z0-9$]*"]],
+  Symbol["WolfdrisVar`" <> name], crash["not a valid variable name: " <> name]];
+symToWL[Con[2 | 3 | 4 | 6, v_]] := v;
+(* WL evaluates (and canonicalises) the expression as it's built *)
+symToWL[Con[5, h_, args_]] := symToWL[h] @@ Map[symToWL, conToList[args]];
+(* A bare name is a System` symbol if there is one *)
+namedSymbol[name_String] := If[StringFreeQ[name, "`"] && Names["System`" <> name] =!= {},
+  Symbol["System`" <> name], Symbol[name]];
+symFrom[e_Integer] := Con[2, e];
+symFrom[e_Real] := Con[3, toDouble[e]];
+symFrom[e_String] := Con[4, e];
+symFrom[e_Symbol] := With[{c = Context[e]}, Which[
+  c === "WolfdrisVar`", Con[1, SymbolName[e]],
+  c === "System`", Con[0, SymbolName[e]],
+  True, Con[0, c <> SymbolName[e]]]];
+symFrom[e_Rational] := Con[5, Con[0, "Rational"], listToCon[{Con[2, Numerator[e]], Con[2, Denominator[e]]}]];
+symFrom[e_Complex] := Con[5, Con[0, "Complex"], listToCon[{symFrom[Re[e]], symFrom[Im[e]]}]];
+symFrom[e_] /; !AtomQ[e] := Con[5, symFrom[Head[e]], listToCon[Map[symFrom, List @@ e]]];
+symFrom[e_] := Con[6, e];
+(* InputForm without the variables' context *)
+symString[e_] := StringReplace[ToString[e, InputForm], "WolfdrisVar`" -> ""];
 
 fromWL[d_, e_] := Catch[conv[d, e], convFail, convCrash[d, e]];
 convCrash[d_, e_][{d1_, e1_}, _] := crash["fromWL: expected " <> descName[d] <> ", got " <> shortForm[e]

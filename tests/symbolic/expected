@@ -1,0 +1,20 @@
+f = x^2*Sin[x]
+f' = x^2*Cos[x] + 2*x*Sin[x]
+integral of f = -((-2 + x^2)*Cos[x]) + 2*x*Sin[x]
+derivative of the integral is f: True
+integral of e^-x^2 = Just ((Sqrt[Pi]*Erf[x])/2)
+its heads: ["Times", "Power", "Erf"]
+integral of sin x / x^x = Nothing
+Taylor e^x, order 4: Just [1, 1, 1/2, 1/6, 1/24]
+Taylor log x at 0: Nothing
+Taylor 1/(1-x), order 3: Just [1, 1, 1, 1]
+solve x^2 == 2: Just [-Sqrt[2], Sqrt[2]]
+solve x^2 == -1: Just [-I, I]
+solve sin x == x^3 + e^x: Nothing
+(x + 1)^5 expands to 6 terms
+factor x^2 - 1: (-1 + x)*(1 + x)
+f at pi/2: Pi^2/4
+numerically: Just "2.467401"
+BesselJ[0, 1] = Just "0.765198"
+a symbol isn't a number: Nothing
+plot exported: True, file exists: True

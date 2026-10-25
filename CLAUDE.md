@@ -368,6 +368,48 @@ A dimension mismatch is a compile error (checked). Patterns it set:
 - Golden output from WL numerics is rounded and sorted (root order, last
   digits aren't specified).
 
+**Symbolic math (step 5, second program, 2026-10-25).** Idris builds
+expressions, WL does the calculus. `tests/symbolic` (golden, also the
+demo): derivative, antiderivative checked by `Simplify[D[F] - f] == 0`,
+`Erf` results inspected by head, Taylor coefficients, `Solve`, a
+user-defined `besselJ`, a PNG plot.
+- **Representation (decided with the user, after comparing three): a
+  generic tree with hidden constructors.** `Wolfram.Symbolic.Expr` =
+  `Sym | Var | IntE | RealE | Str | App Expr (List Expr) | Raw WLExpr`,
+  exported *without* constructors. Rejected: exporting the constructors
+  (anything buildable, `Total[a, b]`, `Sin[1, 2, 3]`), and a closed math
+  AST (every result using `Erf`, `Root`, `ConditionalExpression`… would
+  come back as an opaque box, and the AST would need growing forever).
+  - **Building** only through typed functions: `var`, `Num`/`Neg`/
+    `Fractional`/`FromDouble`/`Abs` instances, `^` (**`infixr 10`**:
+    `*` is 9 and `+` is 8 in Idris), `sin … tanh`, `exp`, `log`, `sqrt`,
+    `pi`, `euler`, `imagI`. These reuse Prelude names (`sin`, `pi` are
+    Double-only there); type-directed disambiguation picks ours.
+  - **Inspecting** through `view : Expr -> View` (`VAdd`, `VMul`, `VPow`,
+    `VFn Func`, `VRat`, …, `VOther name args` for unmodelled heads).
+  - **`Wolfram.Symbolic.Unsafe.apply "BesselJ" [n, x]`** for new builders:
+    one line per function, opt-in import (it round-trips through WL, so it
+    needs no access to the hidden constructors).
+  - Results always convert back (`fromWL` never fails for `Expr`); WL
+    evaluates and canonicalises as expressions are built.
+  - **Variables live in `WolfdrisVar``** so a notebook's own `x = 5`
+    can't leak in; `Show` strips the context.
+- **`Wolfram.Calculus`**: `wlSimplify`, `wlExpand`, `wlFactor`, `wlD`,
+  `wlIntegrate` (Maybe), `wlTaylor` (exactly n+1 coefficients, Maybe),
+  `wlSolve` (Maybe; `Just []` = no solutions), `wlSubst`, `wlN`,
+  `wlExportPlot` (IO; the first export starts the front end, ~8 s, then
+  ~0.2 s each). Failure uses a `{}` / `{result}` glue convention.
+- **`SeriesCoefficient` is unsafe**: it gives `0` for `Log[x]`'s
+  coefficients at 0, where there's no Taylor series. `wlTaylor` uses
+  `Series` and checks for a genuine power series.
+- **A foreign returning `Bool` must give 0/1** (`Boole[...]`), not WL's
+  `True`/`False` — otherwise "unmatched case" later.
+- **Idris doesn't rebuild importers when only a fixity changes**: a stale
+  `Unsafe.ttc` brought back the old fixity of `^` (the last import wins).
+  `scripts/build.sh` now builds the package from clean.
+- Not yet: symbolic paclet exports (a notebook's `Global`x` vs our private
+  variables needs its own design); refined types like `Poly` on top.
+
 **WL fact found here — walking a deep list through a variable can turn
 quadratic.** `While[…, x = x[[3]]]` over a 30,000-cell `Con` list
 usually takes 0.2 s, but sometimes stalls for minutes: after some
@@ -505,6 +547,8 @@ wrappers to primitive element types.
    fitting (`Wolfram.LinAlg`, `tests/polyfit`; see "FFI marshalling").
    **Paclets 2026-10-24:** the same code callable from WL notebooks
    (`Wolfram.Export`, `scripts/paclet.sh`; see Distribution → "Paclets").
+   **Symbolic math 2026-10-25:** `Wolfram.Symbolic`, `Wolfram.Calculus`,
+   `tests/symbolic` (see "Symbolic math" under FFI marshalling).
 
 ## The runtime is the bulk of the work
 

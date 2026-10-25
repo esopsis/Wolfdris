@@ -9,3 +9,6 @@ modules = Wolfram.FFI
         , Wolfram.List
         , Wolfram.LinAlg
         , Wolfram.Export
+        , Wolfram.Symbolic
+        , Wolfram.Symbolic.Unsafe
+        , Wolfram.Calculus
