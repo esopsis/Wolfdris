@@ -564,6 +564,9 @@ descName[d_] := Replace[d, {
   dInteger[] -> "Integer", dInt[] -> "Int", dNat[] -> "Nat", dDouble[] -> "Double",
   dString[] -> "String", dChar[] -> "Char", dBool[] -> "Bool", dExpr[] -> "WLExpr",
   dComplex[] -> "Complex", dSym[] -> "Expr",
+  dMaybe[e_] :> "Maybe " <> descArg[e],
+  dFields[ns_, _] :> "a record with fields " <> StringRiffle[ns, ", "],
+  dRefine[e_, __] :> descName[e],
   dList[e_] :> "List " <> descArg[e],
   dVect[n_, e_] :> "Vect " <> IntegerString[n] <> " " <> descArg[e],
   dPair[a_, b_] :> "(" <> descName[a] <> ", " <> descName[b] <> ")",
@@ -572,7 +575,7 @@ descName[d_] := Replace[d, {
   dFunN[as_List, r_] :> StringRiffle[Append[descArg /@ as, descName[r]], " -> "],
   dEither[e_] :> "Either String " <> descArg[e],
   _ :> ToString[d, InputForm]}];
-descArg[d : (dList | dVect | dFun | dFun2 | dFunN | dEither)[___]] := "(" <> descName[d] <> ")";
+descArg[d : (dList | dVect | dFun | dFun2 | dFunN | dEither | dMaybe)[___]] := "(" <> descName[d] <> ")";
 descArg[d_] := descName[d];
 
 exprString[e_] := ToString[e, InputForm];
@@ -643,8 +646,60 @@ conv[dEither[d_], e_] := Con[1, conv[d, e]];
 (* real numbers are complex numbers with imaginary part 0 *)
 conv[dComplex[], Complex[a_, b_]] := Con[1, conv[dDouble[], a], conv[dDouble[], b]];
 conv[dComplex[], e_] := Con[1, conv[dDouble[], e], 0.];
+(* Maybe: Missing[...] and Null are Nothing (and "" in text mode) *)
+toWL[dMaybe[_], Con[0]] := Missing[];
+toWL[dMaybe[d_], Con[1, v_]] := toWL[d, v];
+conv[dMaybe[_], Missing[___] | Null] := Con[0];
+conv[dMaybe[_], ""] /; TrueQ[textMode] := Con[0];
+conv[dMaybe[d_], e_] := Con[1, conv[d, e]];
+
+(* Records (Wolfram.FFI's recordN): an Association with these keys, as a
+   right-nested tuple (a, (b, c)) on the Idris side; dRefine then builds
+   the record with an Idris function, so the runtime never needs a
+   record's constructor tag. Extra keys are ignored; a missing key is an
+   error unless the field is a Maybe. Errors inside a field carry its name:
+   fieldErr[name, inner]. *)
+toWL[dFields[names_List, ds_List], v_] :=
+  AssociationThread[names, MapThread[toWL, {ds, untuple[Length[ds], v]}]];
+conv[dFields[names_List, ds_List], a_Association] :=
+  tupleCon[MapThread[convField[a], {names, ds}]];
+convField[a_][name_, d_] := Which[
+  KeyExistsQ[a, name],
+    Catch[conv[d, a[name]], convFail, Throw[fieldErr[name, #1], convFail] &],
+  MatchQ[d, dMaybe[_]], Con[0],
+  True, Throw[fieldErr[name, missingErr], convFail]];
+tupleCon[{v_}] := v;
+tupleCon[{v_, rest__}] := Con[1, v, tupleCon[{rest}]];
+untuple[1, v_] := {v};
+untuple[n_, Con[1, a_, b_]] := Prepend[untuple[n - 1, b], a];
+
+(* refine (Wolfram.FFI): convert as d, then apply an Idris function giving
+   Either String b; a Left is a conversion error with that message. to
+   converts back. *)
+toWL[dRefine[d_, _, to_], v_] := toWL[d, to[v, idK]];
+conv[dRefine[d_, from_, _], e_] := With[{r = from[conv[d, e], idK]},
+  If[r[[1]] === 0, Throw[refineErr[r[[2]]], convFail], r[[2]]]];
+
+(* Text mode (fromText, for CSV): numbers may arrive as strings. Strict
+   patterns, so "12abc" is still an error. *)
+conv[d : (dInteger[] | dInt[] | dNat[]), e_String] /;
+    TrueQ[textMode] && StringMatchQ[e, RegularExpression["[+-]?[0-9]+"]] :=
+  conv[d, ToExpression[e]];
+conv[dDouble[], e_String] /; TrueQ[textMode] && exactDecimal[e] =!= None :=
+  toDouble[exactDecimal[e]];
+
 conv[d_, e_] := Throw[{d, e}, convFail];
 convList[d_, e_] := Map[conv[d, #] &, e];
+
+(* The message for a conversion error: a path of field names, then what
+   went wrong *)
+(* an empty CSV cell comes in as Missing[...] *)
+errText[{d_, Missing[___]}] := "no value (expected " <> descName[d] <> ")";
+errText[{d_, e_}] := "expected " <> descName[d] <> ", got " <> shortForm[e];
+errText[fieldErr[n_, i_fieldErr]] := n <> "." <> errText[i];
+errText[fieldErr[n_, missingErr]] := n <> ": missing";
+errText[fieldErr[n_, i_]] := n <> ": " <> errText[i];
+errText[refineErr[m_]] := m;
 
 (* Wolfram.Symbolic's Expr: Sym 0 [name] | Var 1 [name] | IntE 2 | RealE 3
    | Str 4 | App 5 [head, args] | Raw 6 [WL atom]. Every WL expression
@@ -678,7 +733,11 @@ symString[e_] := StringReplace[ToString[e, InputForm], "WolfdrisVar`" -> ""];
 fromWL[d_, e_] := Catch[conv[d, e], convFail, convCrash[d, e]];
 convCrash[d_, e_][{d1_, e1_}, _] := crash["fromWL: expected " <> descName[d] <> ", got " <> shortForm[e]
   <> If[d1 === d, "", " (" <> descName[d1] <> " expected, got " <> shortForm[e1] <> ")"]];
+convCrash[d_, e_][err_, _] := crash["fromWL: " <> errText[err]];
 fromWLMaybe[d_, e_] := Catch[Con[1, conv[d, e]], convFail, Con[0] &];
+(* Either String a: the error message instead of a crash *)
+fromWLEither[d_, e_] := Catch[Con[1, conv[d, e]], convFail, Con[0, errText[#1]] &];
+fromText[d_, e_] := Block[{textMode = True}, fromWLEither[d, e]];
 
 fastPack[l_] := FromCharacterCode[conToList[l]];
 fastUnpack[s_] := listToCon[ToCharacterCode[s]];

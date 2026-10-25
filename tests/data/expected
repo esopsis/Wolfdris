@@ -1,0 +1,22 @@
+loaded 8 sales, rejected 4:
+  line 5: year: expected Nat, got "abc"
+  line 6: year: expected Nat, got -3
+  line 7: amount: no value (expected Double)
+  line 8: region: unknown region "Mars"
+first sale, back in WL: {<|"region" -> "North", "year" -> 2021, "amount" -> 12.5, "note" -> "first sale"|>}
+sales without a note: 2
+  North: 3 sales, total 1013.000000, mean 337.666667
+  South: 2 sales, total 9.250000, mean 4.625000
+  West: 2 sales, total 8.750000, mean 4.375000
+  East: 1 sale, total 8.750000, mean 8.750000
+totals agree with Idris: True
+  2021: total 34.250000, median 7.000000
+  2022: total 1005.500000, median 3.250000
+mean of nothing: Nothing
+chart exported: True
+  Ada (36) in London N1
+  Bob (age unknown) in Paris
+rejected 2 people:
+  item 3: address.city: missing
+  item 4: age: expected Nat, got "old"
+a missing file: could not import no-such-file.csv

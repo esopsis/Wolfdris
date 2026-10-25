@@ -410,6 +410,39 @@ user-defined `besselJ`, a PNG plot.
 - Not yet: symbolic paclet exports (a notebook's `Global`x` vs our private
   variables needs its own design); refined types like `Poly` on top.
 
+**Data (step 5, third program, 2026-10-25).** Import CSV/JSON with WL,
+every row becomes a typed record or is rejected with a reason
+(`line 5: year: expected Nat, got "abc"`), aggregate with WL.
+`tests/data` (golden, also the demo).
+- **Records: a one-line `Marshal` instance** (decided with the user;
+  automatic deriving via `%runElab` can come later):
+  `desc = record4 ("region", "year", "amount", "note") MkSale (\s => (s.region, …))`.
+  `recordN` (1–5) = `dFields[names, descs]` (↔ a WL `Association`, as a
+  right-nested tuple on the Idris side) wrapped in `refine`, so **Idris
+  builds the record** and the runtime never needs constructor tags. Extra
+  keys are ignored; a missing key is an error unless the field is `Maybe`.
+- **`refine : (a -> Either String b) -> (b -> a) -> Desc a -> Desc b`**
+  (runtime `dRefine`, Idris closures applied as `f[x, idK]`): validated
+  types like `Region` from strings; the `Left` is the error message.
+- **`Marshal (Maybe a)`**: `Missing[…]`/`Null` ↔ `Nothing` (and `""` in
+  text mode).
+- **Error paths**: conversion errors are `{d, e}`, `fieldErr[name, inner]`,
+  `refineErr[msg]`; `errText` renders `address.city: missing`. `fromWL`'s
+  crash message is unchanged for plain mismatches.
+- **`fromWLEither`** (message instead of crash) and **`fromText`** (text
+  mode: integer/decimal strings convert to numbers, via `exactDecimal`).
+- **WL guesses CSV types per column**: one `abc` in `year` turns the whole
+  column into strings, while a clean column comes back as numbers. So
+  `wlImportCSV` imports everything as text (`"Numeric" -> False`) and the
+  record's types parse it: a value means the same whatever else is in its
+  column. Empty cells still come back as `Missing["NotAvailable"]` (error
+  text: `no value (expected Double)`).
+- `Wolfram.Data`: `wlImportCSV` (rows as associations keyed by the
+  header), `wlImportJSON`, `validateRows` (CSV line numbers) /
+  `validateItems` (JSON positions), `wlGroupBy` (Idris key function as a
+  callback; first-seen order), `wlMean`, `wlMedian` (Nothing when empty),
+  `wlExportBarChart`.
+
 **WL fact found here — walking a deep list through a variable can turn
 quadratic.** `While[…, x = x[[3]]]` over a 30,000-cell `Con` list
 usually takes 0.2 s, but sometimes stalls for minutes: after some
@@ -549,6 +582,8 @@ wrappers to primitive element types.
    (`Wolfram.Export`, `scripts/paclet.sh`; see Distribution → "Paclets").
    **Symbolic math 2026-10-25:** `Wolfram.Symbolic`, `Wolfram.Calculus`,
    `tests/symbolic` (see "Symbolic math" under FFI marshalling).
+   **Data 2026-10-25:** typed records from CSV/JSON, `Wolfram.Data`,
+   `tests/data` (see "Data" under FFI marshalling).
 
 ## The runtime is the bulk of the work
 

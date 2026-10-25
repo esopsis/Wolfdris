@@ -12,3 +12,4 @@ modules = Wolfram.FFI
         , Wolfram.Symbolic
         , Wolfram.Symbolic.Unsafe
         , Wolfram.Calculus
+        , Wolfram.Data

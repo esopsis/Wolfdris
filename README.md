@@ -80,6 +80,28 @@ doesn't compile; results from Wolfram always come back, even with
 functions Idris doesn't model (`Erf`, …), and can be inspected through a
 typed `view`.
 
+**Data** (from [tests/data](tests/data/Main.idr)) — every CSV row becomes a
+typed record or is rejected with a reason:
+
+```idris
+record Sale where
+  constructor MkSale
+  region : Region          -- North | South | East | West, checked
+  year   : Nat
+  amount : Double
+  note   : Maybe String
+
+Marshal Sale where
+  desc = record4 ("region", "year", "amount", "note") MkSale
+                 (\s => (s.region, s.year, s.amount, s.note))
+
+main = do
+  Right rows <- wlImportCSV "sales.csv" | Left e => putStrLn e
+  let (sales, bad) = validateRows {r = Sale} rows
+  -- bad: [(5, "year: expected Nat, got \"abc\""), (8, "region: unknown region \"Mars\""), ...]
+  for_ (wlGroupBy region sales) $ \(r, ss) => ...
+```
+
 **Calling Idris from a notebook** (from [tests/paclet](tests/paclet/Main.idr)):
 
 ```idris
@@ -109,11 +131,12 @@ Experimental, but substantial and tested:
   depth). It passes **97–98 of 108** of Idris 2's own test programs run
   against it (the rest: `Data.Buffer`, processes, and two or three that
   exceed the time limit) — see [docs/conformance.md](docs/conformance.md).
-- **15 tests** in `tests/`: differential tests (same output as Idris's
+- **16 tests** in `tests/`: differential tests (same output as Idris's
   Chez backend, byte for byte) and golden tests for the wrapper library,
-  the paclet mode and symbolic math.
+  the paclet mode, symbolic math and data import.
 - **Wrapper library** (package `wolfram`): list functions, linear
-  algebra, symbolic calculus, plotting, paclet exports. Wrappers are added
+  algebra, symbolic calculus, data import and validation, charts and
+  plots, paclet exports. Wrappers are added
   as programs need them; there is no attempt at a complete typed stdlib.
 
 ## Requirements
@@ -145,7 +168,7 @@ build/exec/hello                                      # runs it with wolframscri
 scripts/wolfdris -p wolfram --cg wolfram Main.idr -o main
 
 # tests
-scripts/test.sh               # all tests (~10 min), or name some: scripts/test.sh polyfit
+scripts/test.sh               # all tests (~12 min), or name some: scripts/test.sh polyfit
 scripts/conformance.sh        # Idris's own test suite (~35 min)
 ```
 
@@ -157,12 +180,13 @@ Each run pays ~14 s of Wolfram kernel startup.
 
 | Module | What it gives |
 |---|---|
-| `Wolfram.FFI` | `Marshal` (Idris value ↔ Wolfram expression, checked), `toWL`, `fromWL`, `fromWLMaybe`, `WLExpr`, `Complex` |
+| `Wolfram.FFI` | `Marshal` (Idris value ↔ Wolfram expression, checked), `toWL`, `fromWL`, `fromWLMaybe`, `fromWLEither`, `fromText`, `record1`…`record5`, `refine`, `WLExpr`, `Complex` |
 | `Wolfram.List` | `wlSelect`, `wlMap`, `wlSort`, `wlLength`, `wlTotal` |
 | `Wolfram.LinAlg` | `Matrix m n`, `wlDet`, `wlLinearSolve`, `wlLeastSquares`, `wlEigenvalues`, `wlRoots` |
 | `Wolfram.Symbolic` | `Expr` and its typed builders (`var`, `+ - * / ^`, `sin`, `exp`, `pi`, …), `view` |
 | `Wolfram.Symbolic.Unsafe` | `apply "BesselJ" [n, x]`: build with any Wolfram function, by name |
 | `Wolfram.Calculus` | `wlD`, `wlIntegrate`, `wlTaylor`, `wlSolve`, `wlSimplify`, `wlExpand`, `wlFactor`, `wlSubst`, `wlN`, `wlExportPlot` |
+| `Wolfram.Data` | `wlImportCSV`, `wlImportJSON`, `validateRows`, `validateItems`, `wlGroupBy`, `wlMean`, `wlMedian`, `wlExportBarChart` |
 | `Wolfram.Export` | `library`, `fn1`/`fn2`/`fn3`: exports for paclets |
 
 ### Writing a wrapper

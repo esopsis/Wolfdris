@@ -1,0 +1,6 @@
+[
+  {"name": "Ada", "age": 36, "address": {"city": "London", "zip": "N1"}},
+  {"name": "Bob", "age": null, "address": {"city": "Paris"}},
+  {"name": "Cy", "address": {"zip": "123"}},
+  {"name": "Di", "age": "old", "address": {"city": "Rome"}}
+]

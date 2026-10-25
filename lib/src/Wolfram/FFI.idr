@@ -88,6 +88,16 @@ prim__dFun2 : Desc a -> Desc b -> Desc c -> Desc (a -> b -> c)
 %foreign "wolfram:WolfdrisRT`dEither"
 prim__dEither : Desc a -> Desc (Either String a)
 
+%foreign "wolfram:WolfdrisRT`dMaybe"
+prim__dMaybe : Desc a -> Desc (Maybe a)
+
+-- field names and descriptors; t is the right-nested tuple of the fields
+%foreign "wolfram:WolfdrisRT`dFields"
+prim__dFields : WLExpr -> WLExpr -> Desc t
+
+%foreign "wolfram:WolfdrisRT`dRefine"
+prim__dRefine : Desc a -> (a -> Either String b) -> (b -> a) -> Desc b
+
 %foreign "wolfram:WolfdrisRT`toWL"
 prim__toWL : Desc a -> a -> WLExpr
 
@@ -96,6 +106,12 @@ prim__fromWL : Desc a -> WLExpr -> a
 
 %foreign "wolfram:WolfdrisRT`fromWLMaybe"
 prim__fromWLMaybe : Desc a -> WLExpr -> Maybe a
+
+%foreign "wolfram:WolfdrisRT`fromWLEither"
+prim__fromWLEither : Desc a -> WLExpr -> Either String a
+
+%foreign "wolfram:WolfdrisRT`fromText"
+prim__fromText : Desc a -> WLExpr -> Either String a
 
 ||| Types that can cross to Wolfram Language and back.
 public export
@@ -135,6 +151,12 @@ export
 Marshal a => Marshal (Either String a) where
   desc = prim__dEither desc
 
+||| `Nothing` is `Missing[]` in WL; from WL, `Missing[...]` and `Null` (and
+||| `""` with `fromText`) are `Nothing`, anything else must be an `a`.
+export
+Marshal a => Marshal (Maybe a) where
+  desc = prim__dMaybe desc
+
 ||| Idris to WL only: a WL function of one argument. A curried function
 ||| becomes a curried WL function; see `fun2` for two arguments.
 export
@@ -161,6 +183,79 @@ fromWL = prim__fromWL desc
 export
 fromWLMaybe : Marshal a => WLExpr -> Maybe a
 fromWLMaybe = prim__fromWLMaybe desc
+
+||| A WL expression as an Idris value, or what's wrong with it, e.g.
+||| `year: expected Nat, got -3`.
+export
+fromWLEither : Marshal a => WLExpr -> Either String a
+fromWLEither = prim__fromWLEither desc
+
+||| Like `fromWLEither`, for data that arrives as text (CSV): numbers may
+||| be strings ("2021", "1e3"), and "" is `Nothing` for a `Maybe` field.
+export
+fromText : Marshal a => WLExpr -> Either String a
+fromText = prim__fromText desc
+
+-- ---- Records and validated types ----
+
+||| Convert as `a`, then check and turn it into a `b`; the `Left` message
+||| becomes the conversion error. The second function converts back.
+|||
+|||     Marshal Region where
+|||       desc = refine parseRegion show desc
+export
+refine : (a -> Either String b) -> (b -> a) -> Desc a -> Desc b
+refine from to d = prim__dRefine d from to
+
+names : List String -> WLExpr
+names = toWL
+
+descs : List WLExpr -> WLExpr
+descs = toWL
+
+||| A record as a WL `Association` with these keys, given the record's
+||| constructor and a function giving its fields as a tuple:
+|||
+|||     Marshal Sale where
+|||       desc = record3 ("region", "year", "amount") MkSale
+|||                      (\s => (s.region, s.year, s.amount))
+|||
+||| Extra keys are ignored; a missing key is an error unless the field is a
+||| `Maybe`; errors name the field (`year: expected Nat, got "-3"`).
+export
+record1 : Marshal a => String -> (a -> r) -> (r -> a) -> Desc r
+record1 n mk get = refine (Right . mk) get
+  (prim__dFields (names [n]) (descs [descExpr (desc {a})]))
+
+export
+record2 : (Marshal a, Marshal b) => (String, String) -> (a -> b -> r) -> (r -> (a, b)) -> Desc r
+record2 (n1, n2) mk get = refine (\(x, y) => Right (mk x y)) get
+  (prim__dFields (names [n1, n2]) (descs [descExpr (desc {a}), descExpr (desc {a = b})]))
+
+export
+record3 : (Marshal a, Marshal b, Marshal c) =>
+          (String, String, String) -> (a -> b -> c -> r) -> (r -> (a, b, c)) -> Desc r
+record3 (n1, n2, n3) mk get = refine (\(x, y, z) => Right (mk x y z)) get
+  (prim__dFields (names [n1, n2, n3])
+     (descs [descExpr (desc {a}), descExpr (desc {a = b}), descExpr (desc {a = c})]))
+
+export
+record4 : (Marshal a, Marshal b, Marshal c, Marshal d) =>
+          (String, String, String, String) -> (a -> b -> c -> d -> r) ->
+          (r -> (a, b, c, d)) -> Desc r
+record4 (n1, n2, n3, n4) mk get = refine (\(x, y, z, w) => Right (mk x y z w)) get
+  (prim__dFields (names [n1, n2, n3, n4])
+     (descs [ descExpr (desc {a}), descExpr (desc {a = b}), descExpr (desc {a = c})
+            , descExpr (desc {a = d}) ]))
+
+export
+record5 : (Marshal a, Marshal b, Marshal c, Marshal d, Marshal e) =>
+          (String, String, String, String, String) -> (a -> b -> c -> d -> e -> r) ->
+          (r -> (a, b, c, d, e)) -> Desc r
+record5 (n1, n2, n3, n4, n5) mk get = refine (\(x, y, z, w, v) => Right (mk x y z w v)) get
+  (prim__dFields (names [n1, n2, n3, n4, n5])
+     (descs [ descExpr (desc {a}), descExpr (desc {a = b}), descExpr (desc {a = c})
+            , descExpr (desc {a = d}), descExpr (desc {a = e}) ]))
 
 ||| A two-argument Idris function as a WL function of two arguments
 ||| (`f[x, y]`), as WL builtins like `Sort` expect.

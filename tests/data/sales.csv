@@ -1,0 +1,13 @@
+region,year,amount,note
+North,2021,12.5,first sale
+South,2021,7,
+West,2022,3.25,"big order, rush"
+East,abc,4.0,bad year
+North,-3,1.0,negative year
+South,2022,,no amount
+Mars,2022,2.0,unknown region
+North,2022,1e3,scientific notation
+East,2021,8.75,
+West,2021,5.5,ok
+South,2022,2.25,ok
+North,2021,0.5,ok
