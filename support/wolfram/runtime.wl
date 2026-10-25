@@ -525,7 +525,7 @@ listToCon[xs_List] := Fold[Con[1, #2, #1] &, Con[0], Reverse[xs]];
 (* ---- Marshalling: Idris values <-> plain WL (Wolfram.FFI) ---- *)
 (* Conversion is driven by a descriptor of the Idris type, built by the
    wolfram package: dInteger[], dInt[], dNat[], dDouble[], dString[],
-   dChar[], dBool[], dExpr[] (any WL expression, passed as is), dList[d],
+   dChar[], dBool[], dComplex[], dExpr[] (any WL expression, passed as is), dList[d],
    dVect[n, d], dPair[d1, d2], dFun[d1, d2], dFun2[d1, d2, d3]. Runtime
    shapes (see CLAUDE.md): Bool is 0/1, Nat an Integer, List/Vect/pairs are
    Con[0] / Con[1, x, y], Char a code point. *)
@@ -534,6 +534,7 @@ idDescQ[d_] := MatchQ[d, dInteger[] | dInt[] | dNat[] | dDouble[] | dString[] | 
 descName[d_] := Replace[d, {
   dInteger[] -> "Integer", dInt[] -> "Int", dNat[] -> "Nat", dDouble[] -> "Double",
   dString[] -> "String", dChar[] -> "Char", dBool[] -> "Bool", dExpr[] -> "WLExpr",
+  dComplex[] -> "Complex",
   dList[e_] :> "List " <> descArg[e],
   dVect[n_, e_] :> "Vect " <> IntegerString[n] <> " " <> descArg[e],
   dPair[a_, b_] :> "(" <> descName[a] <> ", " <> descName[b] <> ")",
@@ -554,6 +555,8 @@ toWL[dChar[], c_] := FromCharacterCode[c];
 toWL[dBool[], b_] := b === 1;
 toWL[(dList[d_] | dVect[_, d_]), v_] := toWLList[d, conToList[v]];
 toWL[dPair[d1_, d2_], Con[1, a_, b_]] := {toWL[d1, a], toWL[d2, b]};
+(* Wolfram.FFI's Complex record is Con[1, re, im], like a pair *)
+toWL[dComplex[], Con[1, a_, b_]] := Complex[a, b];
 (* Idris closures become WL functions. Heads with SubValues, not Function:
    applying a Function walks its body, which holds the closure and all it
    captures (see "CPS + closure conversion" in CLAUDE.md). *)
@@ -581,6 +584,9 @@ conv[dExpr[], e_] := e;
 conv[dList[d_], e_List] := listToCon[convList[d, e]];
 conv[dVect[n_, d_], e_List] /; Length[e] == n := listToCon[convList[d, e]];
 conv[dPair[d1_, d2_], {a_, b_}] := Con[1, conv[d1, a], conv[d2, b]];
+(* real numbers are complex numbers with imaginary part 0 *)
+conv[dComplex[], Complex[a_, b_]] := Con[1, conv[dDouble[], a], conv[dDouble[], b]];
+conv[dComplex[], e_] := Con[1, conv[dDouble[], e], 0.];
 conv[d_, e_] := Throw[{d, e}, convFail];
 convList[d_, e_] := Map[conv[d, #] &, e];
 

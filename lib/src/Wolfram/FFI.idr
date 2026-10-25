@@ -21,6 +21,22 @@ export
 Show WLExpr where
   show = prim__exprString
 
+||| A complex number of Doubles; WL's `Complex[re, im]`.
+public export
+record Complex where
+  constructor MkComplex
+  re : Double
+  im : Double
+
+export
+Eq Complex where
+  MkComplex a b == MkComplex c d = a == c && b == d
+
+||| `1.5+2.0i`, `1.5-2.0i`
+export
+Show Complex where
+  show (MkComplex a b) = show a ++ (if b < 0 then "-" else "+") ++ show (abs b) ++ "i"
+
 ||| How to convert values of type `a`: an inert runtime expression.
 export
 data Desc : Type -> Type where [external]
@@ -48,6 +64,9 @@ prim__dBool : Desc Bool
 
 %foreign "wolfram:WolfdrisRT`dExpr"
 prim__dExpr : Desc WLExpr
+
+%foreign "wolfram:WolfdrisRT`dComplex"
+prim__dComplex : Desc Complex
 
 %foreign "wolfram:WolfdrisRT`dList"
 prim__dList : Desc a -> Desc (List a)
@@ -90,6 +109,8 @@ export Marshal String where desc = prim__dString
 export Marshal Char where desc = prim__dChar
 export Marshal Bool where desc = prim__dBool
 export Marshal WLExpr where desc = prim__dExpr
+||| Converting from WL accepts real numbers too (imaginary part 0).
+export Marshal Complex where desc = prim__dComplex
 
 export
 Marshal a => Marshal (List a) where

@@ -1,0 +1,11 @@
+fit coefficients: [3.0, -2.5, -1.5, 1.0]
+roots of the fit: [-1.5+0.0i, 1.0+0.0i, 2.0+0.0i]
+companion eigenvalues agree: True
+solution: Just [2.0, 3.0, -1.0]
+residual small: True
+det: -1.0
+singular system: Nothing
+det: 0.0
+roots of x^2 + 1: Just [0.0-1.0i, 0.0+1.0i]
+degree drops: Nothing
+rotation eigenvalues: [0.0-1.0i, 0.0+1.0i]

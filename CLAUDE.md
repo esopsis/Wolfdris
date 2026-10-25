@@ -344,6 +344,29 @@ runtime's converters hard-code them):
 - Deferred (agreed): WL-side handles (`WLVect n a`) that skip conversion
   between chained calls. Add when a program needs it.
 
+**Linear algebra (step 5, first real program, 2026-10-24).**
+`Wolfram.LinAlg`: `Matrix m n = Vect m (Vect n Double)`, `wlDet`,
+`wlLinearSolve` (`Maybe`), `wlLeastSquares`, `wlEigenvalues`, `wlRoots`
+(`Vect (S d) Double -> Maybe (Vect d Complex)`, Nothing if the leading
+coefficient is 0). Demo + golden test: `tests/polyfit` (fit a cubic,
+roots, cross-check against companion-matrix eigenvalues, linear systems).
+A dimension mismatch is a compile error (checked). Patterns it set:
+- **`Complex`** is the package's own record (`Wolfram.FFI`; none in base
+  or contrib), runtime `Con[1, re, im]` like a pair; `fromWL` also accepts
+  real numbers (imaginary part 0).
+- **Unevaluated means `Nothing`.** WL signals failure by returning the call
+  unevaluated (`LinearSolve` with no solution) or `$Failed`; `fromWLMaybe`'s
+  shape check turns any of that into `Nothing` with no per-wrapper code.
+- **A `wolfram:` spec can be a WL expression**: it's emitted as the head
+  applied to the arguments, e.g.
+  `"wolfram:(Module[{x}, x /. NSolve[#.x^Range[0, Length[#] - 1] == 0, x]] &)"`.
+  Use it for a little WL glue instead of adding runtime functions.
+- Inputs cross as nested lists (`map toList`), outputs are checked with
+  `withLengthOf` against something of the promised length, so callers
+  never need dimensions at run time.
+- Golden output from WL numerics is rounded and sorted (root order, last
+  digits aren't specified).
+
 **WL fact found here — walking a deep list through a variable can turn
 quadratic.** `While[…, x = x[[3]]]` over a 30,000-cell `Con` list
 usually takes 0.2 s, but sometimes stalls for minutes: after some
@@ -477,6 +500,8 @@ wrappers to primitive element types.
    Full CPS + closure conversion; see "CPS + closure conversion".
 5. **Grow the wrapper library** as real programs demand it. Mining notes:
    [docs/wrapper-mining.md](docs/wrapper-mining.md).
+   **First program 2026-10-24:** typed linear algebra + polynomial
+   fitting (`Wolfram.LinAlg`, `tests/polyfit`; see "FFI marshalling").
 
 ## The runtime is the bulk of the work
 
