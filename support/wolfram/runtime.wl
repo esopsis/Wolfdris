@@ -618,6 +618,11 @@ callbackN[ds_, dr_, c_][xs___] /; Length[{xs}] == Length[ds] :=
    in the paclet's context ($package, set by the codegen) *)
 defineExports[specs_List] := (Scan[defineExport[$package, #] &, specs]; unit);
 makeExport[name_, usage_, ds_List, dr_, c_] := exportSpec[name, usage, Length[ds], callbackN[ds, dr, c]];
+(* IO exports: apply the arguments, then run the resulting action with the
+   world token (an IO value is its PrimIO function; IORes is erased) *)
+makeExportIO[name_, usage_, ds_List, dr_, c_] := exportSpec[name, usage, Length[ds], callbackNIO[ds, dr, c]];
+callbackNIO[ds_, dr_, c_][xs___] /; Length[{xs}] == Length[ds] :=
+  toWL[dr, Fold[#1[#2, idK] &, c, MapThread[fromWL, {ds, {xs}}]][world, idK]];
 defineExport[ctx_, exportSpec[name_, usage_, n_, cb_]] := With[{s = Symbol[ctx <> name]},
   Unprotect[s]; ClearAll[s];
   s[args___] := callExport[name, n, cb, {args}];
@@ -689,7 +694,9 @@ conv[dDouble[], e_String] /; TrueQ[textMode] && exactDecimal[e] =!= None :=
   toDouble[exactDecimal[e]];
 
 conv[d_, e_] := Throw[{d, e}, convFail];
-convList[d_, e_] := Map[conv[d, #] &, e];
+(* A failing element carries its position: indexErr[i, inner] *)
+convList[d_, e_] := MapIndexed[convItem[d], e];
+convItem[d_][x_, {i_}] := Catch[conv[d, x], convFail, Throw[indexErr[i, #1], convFail] &];
 
 (* The message for a conversion error: a path of field names, then what
    went wrong *)
@@ -700,6 +707,7 @@ errText[fieldErr[n_, i_fieldErr]] := n <> "." <> errText[i];
 errText[fieldErr[n_, missingErr]] := n <> ": missing";
 errText[fieldErr[n_, i_]] := n <> ": " <> errText[i];
 errText[refineErr[m_]] := m;
+errText[indexErr[i_, inner_]] := "item " <> ToString[i] <> ": " <> errText[inner];
 
 (* Wolfram.Symbolic's Expr: Sym 0 [name] | Var 1 [name] | IntE 2 | RealE 3
    | Str 4 | App 5 [head, args] | Raw 6 [WL atom]. Every WL expression
@@ -708,8 +716,12 @@ errText[refineErr[m_]] := m;
 toWL[dSym[], e_] := symToWL[e];
 conv[dSym[], e_] := symFrom[e];
 symToWL[Con[0, name_]] := namedSymbol[name];
-symToWL[Con[1, name_]] := If[StringMatchQ[name, RegularExpression["[A-Za-z$][A-Za-z0-9$]*"]],
-  Symbol["WolfdrisVar`" <> name], crash["not a valid variable name: " <> name]];
+(* A plain name is the program's own variable (private context); a
+   qualified one (Global`x) is a caller's symbol, e.g. from a notebook *)
+symToWL[Con[1, name_]] := Which[
+  StringMatchQ[name, RegularExpression["[A-Za-z$][A-Za-z0-9$]*"]], Symbol["WolfdrisVar`" <> name],
+  StringMatchQ[name, RegularExpression["([A-Za-z$][A-Za-z0-9$]*`)+[A-Za-z$][A-Za-z0-9$]*"]], Symbol[name],
+  True, crash["not a valid variable name: " <> name]];
 symToWL[Con[2 | 3 | 4 | 6, v_]] := v;
 (* WL evaluates (and canonicalises) the expression as it's built *)
 symToWL[Con[5, h_, args_]] := symToWL[h] @@ Map[symToWL, conToList[args]];
@@ -719,10 +731,12 @@ namedSymbol[name_String] := If[StringFreeQ[name, "`"] && Names["System`" <> name
 symFrom[e_Integer] := Con[2, e];
 symFrom[e_Real] := Con[3, toDouble[e]];
 symFrom[e_String] := Con[4, e];
+(* System` symbols are Sym; anything else is a variable: ours by its plain
+   name, a caller's (Global`x) by its full name *)
 symFrom[e_Symbol] := With[{c = Context[e]}, Which[
   c === "WolfdrisVar`", Con[1, SymbolName[e]],
   c === "System`", Con[0, SymbolName[e]],
-  True, Con[0, c <> SymbolName[e]]]];
+  True, Con[1, c <> SymbolName[e]]]];
 symFrom[e_Rational] := Con[5, Con[0, "Rational"], listToCon[{Con[2, Numerator[e]], Con[2, Denominator[e]]}]];
 symFrom[e_Complex] := Con[5, Con[0, "Complex"], listToCon[{symFrom[Re[e]], symFrom[Im[e]]}]];
 symFrom[e_] /; !AtomQ[e] := Con[5, symFrom[Head[e]], listToCon[Map[symFrom, List @@ e]]];

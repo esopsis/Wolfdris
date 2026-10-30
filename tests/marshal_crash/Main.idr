@@ -3,7 +3,7 @@ module Main
 import Wolfram.FFI
 
 -- Golden test (wolfram only): a WL value of the wrong shape crashes,
--- naming the expected type and the part that didn't fit.
+-- naming the position and the part that didn't fit.
 
 %foreign "wolfram:ToExpression"
 parse : String -> WLExpr

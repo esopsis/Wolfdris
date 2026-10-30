@@ -59,10 +59,19 @@ Eq Expr where
 app : String -> List Expr -> Expr
 app h = App (Sym h)
 
-||| A variable.
+||| A variable. A plain name (`var "x"`) is the program's own; a symbol
+||| from a notebook arrives as a variable named by its full name
+||| (`Global`x`), so results come back in the caller's own symbols.
 export
 var : String -> Expr
 var = Var
+
+||| The name of a variable, if the expression is one: for exports that take
+||| "the variable" as an argument (`deriv[expr, x]`).
+export
+varName : Expr -> Maybe String
+varName (Var v) = Just v
+varName _ = Nothing
 
 export
 Num Expr where

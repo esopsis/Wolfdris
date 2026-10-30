@@ -121,6 +121,16 @@ solve[{{1., 2.}}, {1., 1.}]   (* Failure["IdrisError", <|"MessageTemplate" -> "t
 
 Arguments are checked against the Idris types; bad input, a `Left` or a
 crash comes back as a `Failure`, and the notebook's kernel carries on.
+Exports can also take records, do `IO`, and work with expressions in the
+notebook's own symbols (from [tests/paclet2](tests/paclet2/Main.idr)):
+
+```wolfram
+Needs["SalesTools`"]
+totals[{<|"region" -> "North", "year" -> 2021, "amount" -> 12.5|>, <|"region" -> "Mars", ...|>}]
+    (* Failure[... "fromWL: item 2: region: unknown region \"Mars\""] *)
+summarize["sales.csv"]          (* <|"loaded" -> 8, "rejected" -> {"line 5: year: ...", ...}, "totals" -> ...|> *)
+deriv[x^2 Sin[x], x]            (* x^2 Cos[x] + 2 x Sin[x], in your own x *)
+```
 
 ## Status
 
@@ -131,9 +141,9 @@ Experimental, but substantial and tested:
   depth). It passes **97–98 of 108** of Idris 2's own test programs run
   against it (the rest: `Data.Buffer`, processes, and two or three that
   exceed the time limit) — see [docs/conformance.md](docs/conformance.md).
-- **16 tests** in `tests/`: differential tests (same output as Idris's
+- **17 tests** in `tests/`: differential tests (same output as Idris's
   Chez backend, byte for byte) and golden tests for the wrapper library,
-  the paclet mode, symbolic math and data import.
+  paclets, symbolic math and data import.
 - **Wrapper library** (package `wolfram`): list functions, linear
   algebra, symbolic calculus, data import and validation, charts and
   plots, paclet exports. Wrappers are added
@@ -187,7 +197,7 @@ Each run pays ~14 s of Wolfram kernel startup.
 | `Wolfram.Symbolic.Unsafe` | `apply "BesselJ" [n, x]`: build with any Wolfram function, by name |
 | `Wolfram.Calculus` | `wlD`, `wlIntegrate`, `wlTaylor`, `wlSolve`, `wlSimplify`, `wlExpand`, `wlFactor`, `wlSubst`, `wlN`, `wlExportPlot` |
 | `Wolfram.Data` | `wlImportCSV`, `wlImportJSON`, `validateRows`, `validateItems`, `wlGroupBy`, `wlMean`, `wlMedian`, `wlExportBarChart` |
-| `Wolfram.Export` | `library`, `fn1`/`fn2`/`fn3`: exports for paclets |
+| `Wolfram.Export` | `library`, `fn1`…`fn3`, `fnIO1`…`fnIO3`: exports for paclets |
 
 ### Writing a wrapper
 
@@ -221,7 +231,10 @@ wlSelect p xs = let ys : List a = fromWL (prim__select (toWL (toList xs)) (toWL 
 scripts/paclet.sh Main.idr PolyFit outdir     # outdir/PolyFit/{PacletInfo.wl, Kernel/PolyFit.wl}
 ```
 
-`Main.idr`'s `main` registers the exports (`library [fn1 …, fn3 …]`).
+`Main.idr`'s `main` registers the exports (`library [fn1 …, fn3 …]`;
+`fnIO1`… for functions that do `IO`). A notebook's own symbols arrive as
+variables named by their full name (`Global`x`), so symbolic results come
+back in the caller's terms.
 The paclet carries its own copy of the runtime under its own contexts, so
 several Idris paclets can be loaded into one kernel, and loading one
 changes no global settings.
@@ -256,8 +269,8 @@ Wolfram behaviours found along the way — is [CLAUDE.md](CLAUDE.md).
 - **Programs run on Windows**, not in WSL, in the tested setup: paths,
   environment and `prim__os` are Windows'.
 - **No signed zero** (Wolfram has no `-0.0`).
-- Paclet exports are pure functions of data so far (no `IO`, no symbolic
-  arguments).
+- Paclet exports take up to three arguments and can't return Idris
+  functions.
 
 ## Repository layout
 

@@ -1,0 +1,19 @@
+totals: {{"North", 13.}, {"South", 7.}}
+a bad row: Failure["IdrisError", <|"MessageTemplate" -> "fromWL: item 4: region: unknown region \"Mars\""|>]
+a missing field: Failure["IdrisError", <|"MessageTemplate" -> "fromWL: item 1: year: missing"|>]
+summarize: <|"loaded" -> 8, "rejected" -> {"line 5: year: expected Nat, got \"abc\"", "line 6: year: expected Nat, got -3", "line 7: amount: no value (expected Double)", "line 8: region: unknown region \"Mars\""}, "totals" -> {{"North", 1013.}, {"South", 9.25}, {"West", 8.75}, {"East", 8.75}}|>
+summarize a missing file: {Failure, "could not import <dir>nope.csv"}
+deriv: x^2*Cos[x] + 2*x*Sin[x]
+its symbols' contexts: {"Global`"}
+deriv by y: 3*x^2*y^2
+taylor: {1, 1, 1/2, 1/6}
+taylor with a parameter: {1, a, a^2/2}
+no power series: Failure["IdrisError", <|"MessageTemplate" -> "no power series at 0"|>]
+not a variable: Failure["IdrisError", <|"MessageTemplate" -> "the second argument must be a variable"|>]
+x has a value: Failure["IdrisError", <|"MessageTemplate" -> "the second argument must be a variable"|>]
+boomIO is running
+boomIO[0]: 0
+boomIO is running
+boomIO[1]: Failure["IdrisError", <|"MessageTemplate" -> "boom in IO"|>]
+after the crash: {{"North", 12.5}}
+globals unchanged: True

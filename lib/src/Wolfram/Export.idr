@@ -26,6 +26,10 @@ record Export where
 %foreign "wolfram:WolfdrisRT`makeExport"
 prim__makeExport : String -> String -> WLExpr -> WLExpr -> f -> WLExpr
 
+-- the same for a function whose result is an IO action, run per call
+%foreign "wolfram:WolfdrisRT`makeExportIO"
+prim__makeExportIO : String -> String -> WLExpr -> WLExpr -> f -> WLExpr
+
 %foreign "wolfram:WolfdrisRT`defineExports"
 prim__defineExports : WLExpr -> PrimIO ()
 
@@ -44,6 +48,28 @@ export
 fn3 : (Marshal a, Marshal b, Marshal c, Marshal r) =>
       (name, usage : String) -> (a -> b -> c -> r) -> Export
 fn3 n u f = MkExport $ prim__makeExport n u
+  (toWL (the (List WLExpr) [descExpr (desc {a}), descExpr (desc {a = b}), descExpr (desc {a = c})]))
+  (descExpr (desc {a = r})) f
+
+||| An export whose result is an `IO` action, run on each call: it can read
+||| files, use WL's side effects, print (to the notebook). Crashes still
+||| come back as a `Failure`.
+export
+fnIO1 : (Marshal a, Marshal r) => (name, usage : String) -> (a -> IO r) -> Export
+fnIO1 n u f = MkExport $ prim__makeExportIO n u
+  (toWL (the (List WLExpr) [descExpr (desc {a})])) (descExpr (desc {a = r})) f
+
+export
+fnIO2 : (Marshal a, Marshal b, Marshal r) =>
+        (name, usage : String) -> (a -> b -> IO r) -> Export
+fnIO2 n u f = MkExport $ prim__makeExportIO n u
+  (toWL (the (List WLExpr) [descExpr (desc {a}), descExpr (desc {a = b})]))
+  (descExpr (desc {a = r})) f
+
+export
+fnIO3 : (Marshal a, Marshal b, Marshal c, Marshal r) =>
+        (name, usage : String) -> (a -> b -> c -> IO r) -> Export
+fnIO3 n u f = MkExport $ prim__makeExportIO n u
   (toWL (the (List WLExpr) [descExpr (desc {a}), descExpr (desc {a = b}), descExpr (desc {a = c})]))
   (descExpr (desc {a = r})) f
 

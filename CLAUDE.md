@@ -407,8 +407,8 @@ user-defined `besselJ`, a PNG plot.
 - **Idris doesn't rebuild importers when only a fixity changes**: a stale
   `Unsafe.ttc` brought back the old fixity of `^` (the last import wins).
   `scripts/build.sh` now builds the package from clean.
-- Not yet: symbolic paclet exports (a notebook's `Global`x` vs our private
-  variables needs its own design); refined types like `Poly` on top.
+- Symbolic paclet exports: done in paclets round 2 (a caller's `Global`x`
+  is a variable named `"Global`x"`). Not yet: refined types like `Poly`.
 
 **Data (step 5, third program, 2026-10-25).** Import CSV/JSON with WL,
 every row becomes a typed record or is rejected with a reason
@@ -427,8 +427,9 @@ every row becomes a typed record or is rejected with a reason
 - **`Marshal (Maybe a)`**: `Missing[…]`/`Null` ↔ `Nothing` (and `""` in
   text mode).
 - **Error paths**: conversion errors are `{d, e}`, `fieldErr[name, inner]`,
-  `refineErr[msg]`; `errText` renders `address.city: missing`. `fromWL`'s
-  crash message is unchanged for plain mismatches.
+  `indexErr[i, inner]` (list positions, since paclets round 2),
+  `refineErr[msg]`; `errText` renders `item 3: address.city: missing`.
+  `fromWL`'s crash message is unchanged for top-level plain mismatches.
 - **`fromWLEither`** (message instead of crash) and **`fromText`** (text
   mode: integer/decimal strings convert to numbers, via `exactDecimal`).
 - **WL guesses CSV types per column**: one `abc` in `year` turns the whole
@@ -584,6 +585,8 @@ wrappers to primitive element types.
    `tests/symbolic` (see "Symbolic math" under FFI marshalling).
    **Data 2026-10-25:** typed records from CSV/JSON, `Wolfram.Data`,
    `tests/data` (see "Data" under FFI marshalling).
+   **Paclets round 2 2026-10-30:** IO exports, records and symbolic
+   expressions from notebooks (`tests/paclet2`; Distribution → Paclets).
 
 ## The runtime is the bulk of the work
 
@@ -892,10 +895,31 @@ PacletDirectoryLoad["outdir/PolyFit"]; Needs["PolyFit`"]; PolyFit`fit[3, xs, ys]
   `$Messages`, `$Output` options); each call runs in `callIdris`, which
   `Block`s the limits and `$Messages = {}` and catches crashes. The
   overflow handler only acts inside calls.
-- Exported functions are pure for now (`IO` results: later).
 - Test: `tests/paclet` (driver mode in `test.sh`: `paclets` lists the
   names to build, `driver.wl` loads and calls them, output vs `expected`),
   including globals-unchanged and two-paclets-side-by-side checks.
+
+**Round 2 (2026-10-30): records, IO and expressions from notebooks.**
+`tests/paclet2` builds "SalesTools" and drives it like a notebook.
+- **`IO` exports**: `fnIO1..fnIO3` (runtime `makeExportIO` →
+  `callbackNIO`): apply the arguments, then run the action with the world
+  token, `act[WolfdrisRT`world, idK]` (an `IO` value is its PrimIO
+  function; `IORes` is erased — no codegen change was needed). Output goes
+  to the notebook; crashes are still `Failure`s.
+- **Records from notebook data** work through `Marshal` composition
+  (`List Sale` ← a list of associations; extra keys ignored, missing
+  `Maybe` fields are `Nothing`), and come back as associations.
+- **Error positions**: a failing list element reports its position
+  (`indexErr`), e.g. `fromWL: item 4: region: unknown region "Mars"`.
+  This replaced the old `(Integer expected, got x)` suffix for lists.
+- **Symbolic arguments in the caller's own symbols** (decided in the
+  plan): a non-`System`` symbol from WL becomes a variable named by its
+  full name (`Global`x` ↔ `Var "Global`x"`), while plain names
+  (`var "x"`) stay private in `WolfdrisVar``. So `deriv[x^2 Sin[x], x]`
+  answers in the notebook's `x`. A symbol with a value is substituted
+  before the call, as with any WL function (`x = 5; deriv[x^2, x]` is
+  `deriv[25, 5]`) — documented, not prevented. `varName` gets a
+  variable's name for exports that take "the variable".
 
 ## Conventions
 
