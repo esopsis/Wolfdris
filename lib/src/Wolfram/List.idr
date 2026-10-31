@@ -28,8 +28,8 @@ prim__total : WLExpr -> WLExpr
 ||| The elements satisfying the predicate (`Select`). How many there are is
 ||| measured, not known in advance.
 export
-wlSelect : Marshal a => (a -> Bool) -> Vect n a -> (p ** Vect p a)
-wlSelect p xs
+select : Marshal a => (a -> Bool) -> Vect n a -> (p ** Vect p a)
+select p xs
     = let ys : List a = fromWL (prim__select (toWL (toList xs)) (toWL p)) in
       (_ ** fromList ys)
 

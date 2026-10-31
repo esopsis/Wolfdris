@@ -326,7 +326,7 @@ runtime's converters hard-code them):
   `Int`, `Nat`, `Double`, `String`, `Char`, `Bool`, `WLExpr`, `List`,
   `Vect n` (needs `n` at run time), pairs, `a -> b` to WL only),
   `toWL`/`fromWL`/`fromWLMaybe`, `fun2`, `withLengthOf`.
-  `Wolfram.List` — `wlSelect`, `wlMap`, `wlSort`, `wlLength`, `wlTotal`.
+  `Wolfram.List` — `select`, `wlMap`, `wlSort`, `wlLength`, `wlTotal`.
 - A wrapper is a `%foreign "wolfram:Select"` over `WLExpr` plus a few
   lines of Idris; lengths are re-established by `fromList` (measured) or
   `withLengthOf` (checked against the input, so callers don't need `n` at
@@ -346,8 +346,8 @@ runtime's converters hard-code them):
   between chained calls. Add when a program needs it.
 
 **Linear algebra (step 5, first real program, 2026-10-24).**
-`Wolfram.LinAlg`: `Matrix m n = Vect m (Vect n Double)`, `wlDet`,
-`wlLinearSolve` (`Maybe`), `wlLeastSquares`, `wlEigenvalues`, `wlRoots`
+`Wolfram.LinAlg`: `Matrix m n = Vect m (Vect n Double)`, `det`,
+`linearSolve` (`Maybe`), `leastSquares`, `eigenvalues`, `roots`
 (`Vect (S d) Double -> Maybe (Vect d Complex)`, Nothing if the leading
 coefficient is 0). Demo + golden test: `tests/polyfit` (fit a cubic,
 roots, cross-check against companion-matrix eigenvalues, linear systems).
@@ -394,13 +394,13 @@ user-defined `besselJ`, a PNG plot.
     evaluates and canonicalises as expressions are built.
   - **Variables live in `WolfdrisVar``** so a notebook's own `x = 5`
     can't leak in; `Show` strips the context.
-- **`Wolfram.Calculus`**: `wlSimplify`, `wlExpand`, `wlFactor`, `wlD`,
-  `wlIntegrate` (Maybe), `wlTaylor` (exactly n+1 coefficients, Maybe),
-  `wlSolve` (Maybe; `Just []` = no solutions), `wlSubst`, `wlN`,
-  `wlExportPlot` (IO; the first export starts the front end, ~8 s, then
+- **`Wolfram.Calculus`**: `simplify`, `expand`, `factor`, `wlD`,
+  `integrate` (Maybe), `taylor` (exactly n+1 coefficients, Maybe),
+  `solve` (Maybe; `Just []` = no solutions), `subst`, `wlN`,
+  `exportPlot` (IO; the first export starts the front end, ~8 s, then
   ~0.2 s each). Failure uses a `{}` / `{result}` glue convention.
 - **`SeriesCoefficient` is unsafe**: it gives `0` for `Log[x]`'s
-  coefficients at 0, where there's no Taylor series. `wlTaylor` uses
+  coefficients at 0, where there's no Taylor series. `taylor` uses
   `Series` and checks for a genuine power series.
 - **A foreign returning `Bool` must give 0/1** (`Boole[...]`), not WL's
   `True`/`False` — otherwise "unmatched case" later.
@@ -434,15 +434,15 @@ every row becomes a typed record or is rejected with a reason
   mode: integer/decimal strings convert to numbers, via `exactDecimal`).
 - **WL guesses CSV types per column**: one `abc` in `year` turns the whole
   column into strings, while a clean column comes back as numbers. So
-  `wlImportCSV` imports everything as text (`"Numeric" -> False`) and the
+  `importCSV` imports everything as text (`"Numeric" -> False`) and the
   record's types parse it: a value means the same whatever else is in its
   column. Empty cells still come back as `Missing["NotAvailable"]` (error
   text: `no value (expected Double)`).
-- `Wolfram.Data`: `wlImportCSV` (rows as associations keyed by the
-  header), `wlImportJSON`, `validateRows` (CSV line numbers) /
+- `Wolfram.Data`: `importCSV` (rows as associations keyed by the
+  header), `importJSON`, `validateRows` (CSV line numbers) /
   `validateItems` (JSON positions), `wlGroupBy` (Idris key function as a
-  callback; first-seen order), `wlMean`, `wlMedian` (Nothing when empty),
-  `wlExportBarChart`.
+  callback; first-seen order), `mean`, `median` (Nothing when empty),
+  `exportBarChart`.
 
 **WL fact found here — walking a deep list through a variable can turn
 quadratic.** `While[…, x = x[[3]]]` over a 30,000-cell `Con` list
@@ -462,10 +462,10 @@ them slow. The trigger is still unknown.
 exact oscillator, a blow-up, failures, a figure-eight 3-body orbit, a
 plot). Decided with the user: **both input styles**, and a **partial
 solution** when the solver stops early.
-- `odeSolve rhs y0 t0 t1` with `rhs : Double -> Vect n Double -> Vect n
-  Double` (an Idris callback, `fun2` → `callback2`), `odeSolveSym t vars
+- `nDSolve rhs y0 t0 t1` with `rhs : Double -> Vect n Double -> Vect n
+  Double` (an Idris callback, `fun2` → `callback2`), `nDSolveSym t vars
   rhs y0 t0 t1` (a symbolic system, `Vect n Expr`), both `Either String
-  (Solution n)`; `dsolve` (exact, `DSolve`; `Maybe`, Nothing unless
+  (Solution n)`; `dSolve` (exact, `DSolve`; `Maybe`, Nothing unless
   exactly one solution). A right-hand side of the wrong dimension doesn't
   compile (checked).
 - **The first WL-side handle**: `Solution n` (constructor hidden) holds
@@ -474,7 +474,7 @@ solution** when the solver stops early.
   handles both) — as a `WLExpr`, never converted, plus `y0` to check WL's
   results against (no `n` needed at run time), `t0`, `tEnd`, `t1`.
   `sample` (Nothing outside the solved span), `table`, `domain`,
-  `stopReason`, `wlExportSolutionPlot`.
+  `stopReason`, `exportSolutionPlot`.
 - Runtime glue (`runtime.wl`, "Differential equations"): `odeRHS[cb][t_?
   NumericQ, y_ /; VectorQ[y, NumericQ]]` — NDSolve first evaluates the
   equations symbolically, so the callback must only fire on numbers.
@@ -559,7 +559,7 @@ Vect 5 Int  →  Select  →  Vect ??? Int
 Fix: wrap, measure, re-establish the invariant as a dependent pair.
 
 ```idris
-wlSelect : (a -> Bool) -> Vect n a -> (p ** Vect p a)
+select : (a -> Bool) -> Vect n a -> (p ** Vect p a)
 ```
 
 This is the deal the project is making: **we reuse WL's implementations and
@@ -571,11 +571,32 @@ real program. Do NOT attempt a complete typed stdlib up front.
 
 ### Wrappers check where cheap, assert only where they must
 
-Measuring makes a fact *checked*, not asserted: `wlSelect` measures `p`.
+Measuring makes a fact *checked*, not asserted: `select` measures `p`.
 Where a wrapper claims a shape (`Sort` keeps length `n`), check it at runtime
 and crash loudly on mismatch rather than `believe_me` it. This shrinks the
 trusted base toward "the marshalling is correct" instead of "every wrapper is
 correct".
+
+### Naming wrappers (decided with the user, 2026-10-30)
+
+**A wrapper takes the WL name, first letter lowercased** (`FindRoot` →
+`findRoot`, `NDSolve` → `nDSolve`, `LinearSolve` → `linearSolve`); the
+user prefers short names, and a VS Code extension is to colour library
+names as "built-in" (see "Plan"). **Keep the `wl` prefix only where the
+plain name would clash:**
+- with the Prelude or common base modules: `wlMap`, `wlSort`,
+  `wlLength`, `wlGroupBy` (Data.List);
+- with an Idris keyword: `wlTotal` (`total`);
+- **one-letter names**: `wlD`, `wlN` — a lowercase name unknown in a
+  type (`Vect n Double`) is an automatic implicit, so a global `n` or
+  `d` would collide with users' signatures.
+
+Our own helpers that aren't a WL function keep descriptive names
+(`sample`, `table`, `validateRows`, `taylor`, `exportPlot`). Rejected:
+capitalised names (`FindRoot` — in Idris capitals mean types and
+constructors, and a capitalised name in a pattern is a constructor), a
+qualified `import Wolfram as WL` (more to type), changing Idris's naming
+rules (would need a compiler fork; breaks the standard library).
 
 **Polymorphic trap:** `Sort` on `Vect n a` with opaque `a` would sort by WL's
 canonical order of the tagged-constructor representation, not Idris `Ord`.
@@ -647,6 +668,40 @@ wrappers to primitive element types.
    **ODEs 2026-10-30:** `Wolfram.ODE` (NDSolve/DSolve, the first WL-side
    handle), `tests/ode` (see "Differential equations" under FFI
    marshalling).
+
+### Plan (agreed with the user, 2026-10-30), in order
+
+1. **Wrapper rename** to the naming convention above — done 2026-10-30.
+2. **Editor setup:** VS Code + the WSL extension + `idris2-lsp` built
+   against our Idris v0.8.0 (not yet verified that it builds; find the
+   matching release/commit). Check hover, errors and the interactive
+   commands (case split, add clause, holes) on a test program. The user
+   is new to Idris (reading *Type-Driven Development with Idris*, written
+   for Idris 1; the Idris 2 docs have a chapter-by-chapter "Updates
+   Required" section). Atom, which the book recommends, is discontinued.
+3. **Highlighting extension** (VS Code): colour every name the `wolfram`
+   package exports, from a word list generated at build time. Hover
+   (idris2-lsp) gives the exact origin.
+4. **Runtime gaps:** `Data.Buffer` (4 conformance tests; `ByteArray`
+   vs a packed array in the runtime — measure), processes (`system`,
+   `popen`; first decide whose shell: Windows or WSL), `json_001` speed
+   (a `DoublePow` fast path, or direct style).
+5. **Wrapper draft generator:** given a WL function, read
+   `SyntaxInformation`, `Options` and the documentation examples (see
+   [docs/wrapper-mining.md](docs/wrapper-mining.md)), run the examples
+   in fresh contexts with time limits, and write a draft wrapper
+   (`%foreign`, guessed signature, `Maybe` where failures were seen,
+   comments with the observations) **plus the examples as tests**. A
+   person reviews it and adds the dependent facts. Maybe use
+   `Compile`TypeEnvironment` for numeric ground truth. Guesses are
+   drafts, never trusted: mined signatures are too narrow and miss
+   exactly the facts wrappers exist to state.
+
+Smaller, noted: notebook exports of ODE solutions (`InterpolatingFunction`
+back to WL), installable `.paclet` archives and Linux/macOS support (for
+a shareable v0.1), readable WL output (still deferred). Rough horizon
+estimated with the user: ~4 sessions to a complete backend, ~10 to
+something shareable, 15–20 to a broad tool.
 
 ## The runtime is the bulk of the work
 

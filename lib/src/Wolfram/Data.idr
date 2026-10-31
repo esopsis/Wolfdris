@@ -29,15 +29,15 @@ prim__importJSON : String -> PrimIO WLExpr
 ||| The rows of a CSV file with a header row, each as an association keyed
 ||| by the header. All values are text; validate them with `validateRows`.
 export
-wlImportCSV : HasIO io => (file : String) -> io (Either String (List WLExpr))
-wlImportCSV f = pure (okOrError !(primIO (prim__importCSV f)) >>= fromWLEither)
+importCSV : HasIO io => (file : String) -> io (Either String (List WLExpr))
+importCSV f = pure (okOrError !(primIO (prim__importCSV f)) >>= fromWLEither)
 
 ||| A JSON file (objects become associations, null is Null).
 export
-wlImportJSON : HasIO io => (file : String) -> io (Either String WLExpr)
-wlImportJSON f = pure (okOrError !(primIO (prim__importJSON f)))
+importJSON : HasIO io => (file : String) -> io (Either String WLExpr)
+importJSON f = pure (okOrError !(primIO (prim__importJSON f)))
 
-||| Convert CSV rows (from `wlImportCSV`) into records: the good ones, and
+||| Convert CSV rows (from `importCSV`) into records: the good ones, and
 ||| for each rejected row its line in the file (the header is line 1) and
 ||| the reason.
 export
@@ -85,13 +85,13 @@ maybeOne r = case the (List a) (fromWL r) of
 
 ||| The mean (`Mean`), or Nothing for no values.
 export
-wlMean : List Double -> Maybe Double
-wlMean xs = maybeOne (prim__mean (toWL xs))
+mean : List Double -> Maybe Double
+mean xs = maybeOne (prim__mean (toWL xs))
 
 ||| The median (`Median`), or Nothing for no values.
 export
-wlMedian : List Double -> Maybe Double
-wlMedian xs = maybeOne (prim__median (toWL xs))
+median : List Double -> Maybe Double
+median xs = maybeOne (prim__median (toWL xs))
 
 -- Bool results must be 0/1 at run time
 %foreign "wolfram:(Boole[Quiet[Check[Export[#1, BarChart[#2[[All, 2]], ChartLabels -> #2[[All, 1]]]], $Failed]] =!= $Failed] &)"
@@ -101,5 +101,5 @@ prim__exportBarChart : String -> WLExpr -> PrimIO Bool
 ||| format follows the extension). False if WL couldn't. The first export
 ||| in a session starts WL's front end (several seconds).
 export
-wlExportBarChart : HasIO io => (file : String) -> List (String, Double) -> io Bool
-wlExportBarChart f bars = primIO (prim__exportBarChart f (toWL bars))
+exportBarChart : HasIO io => (file : String) -> List (String, Double) -> io Bool
+exportBarChart f bars = primIO (prim__exportBarChart f (toWL bars))

@@ -77,7 +77,7 @@ reportRejected bad what = for_ bad $ \(i, e) => putStrLn ("  " ++ what ++ " " ++
 
 main : IO ()
 main = do
-  Right rows <- wlImportCSV "sales.csv"
+  Right rows <- importCSV "sales.csv"
     | Left e => putStrLn ("import failed: " ++ e)
   let (sales, bad) = validateRows {r = Sale} rows
   putStrLn $ "loaded " ++ show (length sales) ++ " sales, rejected " ++ show (length bad) ++ ":"
@@ -89,17 +89,17 @@ main = do
   for_ byRegion $ \(r, ss) =>
     putStrLn $ "  " ++ show r ++ ": " ++ show (length ss)
       ++ (if length ss == 1 then " sale" else " sales") ++ ", total "
-      ++ fixed6 (total' ss) ++ ", mean " ++ maybe "-" fixed6 (wlMean (map amount ss))
+      ++ fixed6 (total' ss) ++ ", mean " ++ maybe "-" fixed6 (mean (map amount ss))
   putStrLn $ "totals agree with Idris: "
     ++ show (all (\(r, ss) => total' ss == total' (filter ((== r) . region) sales)) byRegion)
   for_ (wlGroupBy year sales) $ \(y, ss) =>
     putStrLn $ "  " ++ show y ++ ": total " ++ fixed6 (total' ss)
-      ++ ", median " ++ maybe "-" fixed6 (wlMedian (map amount ss))
-  putStrLn $ "mean of nothing: " ++ show (wlMean [])
-  ok <- wlExportBarChart "build/sales.png" (map (\(r, ss) => (show r, total' ss)) byRegion)
+      ++ ", median " ++ maybe "-" fixed6 (median (map amount ss))
+  putStrLn $ "mean of nothing: " ++ show (mean [])
+  ok <- exportBarChart "build/sales.png" (map (\(r, ss) => (show r, total' ss)) byRegion)
   putStrLn $ "chart exported: " ++ show ok
   -- JSON: nested records, null and missing fields
-  Right json <- wlImportJSON "people.json"
+  Right json <- importJSON "people.json"
     | Left e => putStrLn ("import failed: " ++ e)
   let (people, badPeople) = validateItems {r = Person} (fromWL json)
   for_ people $ \p =>
@@ -107,5 +107,5 @@ main = do
       ++ p.address.city ++ maybe "" (" " ++) p.address.zip
   putStrLn $ "rejected " ++ show (length badPeople) ++ " people:"
   reportRejected badPeople "item"
-  missing <- wlImportCSV "no-such-file.csv"
+  missing <- importCSV "no-such-file.csv"
   putStrLn $ "a missing file: " ++ either id (const "imported?") missing

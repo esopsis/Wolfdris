@@ -88,7 +88,7 @@ covering
 main : IO ()
 main = do
   -- 1. pendulum, right-hand side in Idris
-  report "pendulum" (odeSolve pendulum [1.0, 0.0] 0.0 20.0) $ \s => do
+  report "pendulum" (nDSolve pendulum [1.0, 0.0] 0.0 20.0) $ \s => do
     putStrLn $ "pendulum domain: " ++ show (domain s) ++ ", stopped early: " ++ show (stopReason s)
     putStrLn $ "pendulum at t = 20: " ++ showM (sample s 20.0)
     let e0 = energy [1.0, 0.0]
@@ -97,48 +97,48 @@ main = do
     putStrLn $ "pendulum table: " ++ joinBy "; " (map (\(t, y) => fixed t ++ " " ++ showV y) (table s 4))
     -- 2. the same system, symbolically
     report "symbolic pendulum"
-      (odeSolveSym "t" ["th", "om"] [var "om", - sin (var "th")] [1.0, 0.0] 0.0 20.0) $ \s' =>
+      (nDSolveSym "t" ["th", "om"] [var "om", - sin (var "th")] [1.0, 0.0] 0.0 20.0) $ \s' =>
       putStrLn $ "symbolic agrees within 1e-6: "
         ++ show (all (\t => maybe False id [| (\a, b => distance a b < 1.0e-6) (sample s t) (sample s' t) |])
                      (the (List Double) [0.0, 5.0, 12.5, 20.0]))
-    ok <- wlExportSolutionPlot "build/pendulum.png" s ["angle", "angular velocity"]
+    ok <- exportSolutionPlot "build/pendulum.png" s ["angle", "angular velocity"]
     putStrLn $ "plot exported: " ++ show ok ++ ", file exists: " ++ show (fileExists "build/pendulum.png")
 
   -- 3. predator and prey
-  report "lotka-volterra" (odeSolve lotkaVolterra [2.0, 1.0] 0.0 100.0) $ \s => do
+  report "lotka-volterra" (nDSolve lotkaVolterra [2.0, 1.0] 0.0 100.0) $ \s => do
     let c0 = conserved [2.0, 1.0]
     putStrLn $ "conserved quantity drift below 1e-4: "
       ++ show (maxBy (\(_, y) => abs (conserved y - c0)) (table s 500) < 1.0e-4)
 
   -- 4. harmonic oscillator, exactly and numerically
-  case dsolve "t" ["x", "v"] [var "v", - var "x"] [1, 0] 0 of
-    Nothing => putStrLn "dsolve: no solution"
+  case dSolve "t" ["x", "v"] [var "v", - var "x"] [1, 0] 0 of
+    Nothing => putStrLn "dSolve: no solution"
     Just exact => do
       putStrLn $ "exact: " ++ show exact
-      report "oscillator" (odeSolve (\_, [x, v] => [v, - x]) [1.0, 0.0] 0.0 10.0) $ \s =>
+      report "oscillator" (nDSolve (\_, [x, v] => [v, - x]) [1.0, 0.0] 0.0 10.0) $ \s =>
         putStrLn $ "numerical agrees with exact: "
-          ++ show (all (\t => case (sample s t, traverse (\e => wlN (wlSubst e "t" (fromDouble t))) exact) of
+          ++ show (all (\t => case (sample s t, traverse (\e => wlN (subst e "t" (fromDouble t))) exact) of
                                 (Just a, Just b) => distance a b < 1.0e-5
                                 _ => False)
                        (the (List Double) [0.0, 1.5, 3.0, 7.25, 10.0]))
 
   -- 5. y' = y^2 blows up at t = 1: the solution stops there
-  report "blow-up" (odeSolve (\_, [y] => [y * y]) [1.0] 0.0 2.0) $ \s => do
+  report "blow-up" (nDSolve (\_, [y] => [y * y]) [1.0] 0.0 2.0) $ \s => do
     putStrLn $ "blow-up solved up to: " ++ fixed (snd (domain s))
     putStrLn $ "stop reason given: " ++ show (map (Data.String.isPrefixOf "stopped at t = ") (stopReason s))
     putStrLn $ "at t = 0.5: " ++ showM (sample s 0.5) ++ ", at t = 1.5: " ++ showM (sample s 1.5)
 
   -- backwards in time: y' = y from t = 0 to t = -1
-  report "backwards" (odeSolve (\_, [y] => [y]) [1.0] 0.0 (-1.0)) $ \s =>
+  report "backwards" (nDSolve (\_, [y] => [y]) [1.0] 0.0 (-1.0)) $ \s =>
     putStrLn $ "backwards: " ++ show (domain s) ++ ", y(-1) = " ++ showM (sample s (-1.0))
 
   -- 6. failures come back as Left, with WL's reason
-  report "NaN right-hand side" (odeSolve (\_, [y] => [0.0 / 0.0]) [1.0] 0.0 1.0) $ \_ =>
+  report "NaN right-hand side" (nDSolve (\_, [y] => [0.0 / 0.0]) [1.0] 0.0 1.0) $ \_ =>
     putStrLn "NaN right-hand side: solved?"
-  report "unknown parameter" (odeSolveSym "t" ["y"] [var "a" * var "y"] [1.0] 0.0 1.0) $ \_ =>
+  report "unknown parameter" (nDSolveSym "t" ["y"] [var "a" * var "y"] [1.0] 0.0 1.0) $ \_ =>
     putStrLn "unknown parameter: solved?"
 
   -- 7. three bodies chasing each other around a figure eight
-  report "figure eight" (odeSolve threeBody figureEight 0.0 6.32591398) $ \s =>
+  report "figure eight" (nDSolve threeBody figureEight 0.0 6.32591398) $ \s =>
     putStrLn $ "figure eight back at the start after one period: "
       ++ show (map (\y => distance y figureEight < 1.0e-3) (sample s 6.32591398))

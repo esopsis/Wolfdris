@@ -17,7 +17,7 @@ powers (S k) x = 1.0 :: map (* x) (powers k x)
 ||| Least-squares fit of a degree-d polynomial to the points (x_i, y_i):
 ||| d + 1 coefficients, lowest degree first.
 fit : (d : Nat) -> Vect (S m) Double -> Vect (S m) Double -> Vect (S d) Double
-fit d xs ys = wlLeastSquares (map (powers d) xs) ys
+fit d xs ys = leastSquares (map (powers d) xs) ys
 
 ||| A matrix whose eigenvalues are the roots of the cubic c0 + c1 x + c2 x^2 + c3 x^3.
 companion : Vect 4 Double -> Matrix 3 3
@@ -58,26 +58,26 @@ b = [8.0, -11.0, -3.0]
 
 -- Doesn't compile: a 3x3 system needs a right-hand side of length 3.
 -- bad : Maybe (Vect 3 Double)
--- bad = wlLinearSolve a [1.0, 2.0]
+-- bad = linearSolve a [1.0, 2.0]
 
 main : IO ()
 main = do
   let cs = fit 3 xs ys
   putStrLn $ "fit coefficients: " ++ show (map approx cs)
-  case wlRoots cs of
+  case roots cs of
     Nothing => putStrLn "the fit isn't a cubic"
     Just rs => do
       putStrLn $ "roots of the fit: " ++ show (sorted rs)
       putStrLn $ "companion eigenvalues agree: "
-        ++ show (sorted (wlEigenvalues (companion cs)) == sorted rs)
-  let sol = wlLinearSolve a b
+        ++ show (sorted (eigenvalues (companion cs)) == sorted rs)
+  let sol = linearSolve a b
   putStrLn $ "solution: " ++ show (map (map approx) sol)
   putStrLn $ "residual small: "
     ++ show (maybe False (\x => all (\r => abs r < 1.0e-9) (zipWith (-) (mulMV a x) b)) sol)
-  putStrLn $ "det: " ++ show (approx (wlDet a))
+  putStrLn $ "det: " ++ show (approx (det a))
   let s = the (Matrix 2 2) [[1.0, 2.0], [2.0, 4.0]]
-  putStrLn $ "singular system: " ++ show (wlLinearSolve s [1.0, 1.0])
-  putStrLn $ "det: " ++ show (approx (wlDet s))
-  putStrLn $ "roots of x^2 + 1: " ++ show (map sorted (wlRoots [1.0, 0.0, 1.0]))
-  putStrLn $ "degree drops: " ++ show (map sorted (wlRoots [1.0, 1.0, 0.0]))
-  putStrLn $ "rotation eigenvalues: " ++ show (sorted (wlEigenvalues [[0.0, -1.0], [1.0, 0.0]]))
+  putStrLn $ "singular system: " ++ show (linearSolve s [1.0, 1.0])
+  putStrLn $ "det: " ++ show (approx (det s))
+  putStrLn $ "roots of x^2 + 1: " ++ show (map sorted (roots [1.0, 0.0, 1.0]))
+  putStrLn $ "degree drops: " ++ show (map sorted (roots [1.0, 1.0, 0.0]))
+  putStrLn $ "rotation eigenvalues: " ++ show (sorted (eigenvalues [[0.0, -1.0], [1.0, 0.0]]))

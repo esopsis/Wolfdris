@@ -40,10 +40,10 @@ list, so shape information is lost at every call. The wrappers measure or
 check it and put it back into the type:
 
 ```idris
-wlSelect      : Marshal a => (a -> Bool) -> Vect n a -> (p ** Vect p a)       -- p is measured
-wlLinearSolve : Matrix n n -> Vect n Double -> Maybe (Vect n Double)          -- Nothing: no solution
-wlRoots       : Vect (S d) Double -> Maybe (Vect d Complex)                   -- exactly d roots
-wlTaylor      : (n : Nat) -> Expr -> String -> Expr -> Maybe (Vect (S n) Expr) -- exactly n+1 coefficients
+select      : Marshal a => (a -> Bool) -> Vect n a -> (p ** Vect p a)       -- p is measured
+linearSolve : Matrix n n -> Vect n Double -> Maybe (Vect n Double)          -- Nothing: no solution
+roots       : Vect (S d) Double -> Maybe (Vect d Complex)                   -- exactly d roots
+taylor      : (n : Nat) -> Expr -> String -> Expr -> Maybe (Vect (S n) Expr) -- exactly n+1 coefficients
 ```
 
 A 3×3 system with a right-hand side of length 2 is a compile error.
@@ -52,11 +52,11 @@ A 3×3 system with a right-hand side of length 2 is a compile error.
 
 ```idris
 fit : (d : Nat) -> Vect (S m) Double -> Vect (S m) Double -> Vect (S d) Double
-fit d xs ys = wlLeastSquares (map (powers d) xs) ys
+fit d xs ys = leastSquares (map (powers d) xs) ys
 
 main = do
   let cs = fit 3 xs ys                 -- [3.0, -2.5, -1.5, 1.0]
-  case wlRoots cs of
+  case roots cs of
     Just rs => printLn rs              -- the cubic's 3 roots, as Complex
     Nothing => putStrLn "leading coefficient is 0"
 ```
@@ -69,10 +69,10 @@ x = var "x"
 f = x ^ 2 * sin x
 
 wlD f "x"                     -- x^2*Cos[x] + 2*x*Sin[x]
-wlIntegrate f "x"             -- Just (-((-2 + x^2)*Cos[x]) + 2*x*Sin[x])
-wlIntegrate (sin x / x ^ x) "x"   -- Nothing (no closed form)
-wlSolve (x ^ 2) (-1) "x"      -- Just [-I, I]
-wlExportPlot "f.png" f "x" (-3.0) 3.0
+integrate f "x"             -- Just (-((-2 + x^2)*Cos[x]) + 2*x*Sin[x])
+integrate (sin x / x ^ x) "x"   -- Nothing (no closed form)
+solve (x ^ 2) (-1) "x"      -- Just [-I, I]
+exportPlot "f.png" f "x" (-3.0) 3.0
 ```
 
 Expressions can only be built through typed functions, so `Sin[1, 2, 3]`
@@ -96,7 +96,7 @@ Marshal Sale where
                  (\s => (s.region, s.year, s.amount, s.note))
 
 main = do
-  Right rows <- wlImportCSV "sales.csv" | Left e => putStrLn e
+  Right rows <- importCSV "sales.csv" | Left e => putStrLn e
   let (sales, bad) = validateRows {r = Sale} rows
   -- bad: [(5, "year: expected Nat, got \"abc\""), (8, "region: unknown region \"Mars\""), ...]
   for_ (wlGroupBy region sales) $ \(r, ss) => ...
@@ -110,11 +110,11 @@ number of components doesn't compile:
 pendulum : Double -> Vect 2 Double -> Vect 2 Double
 pendulum _ [th, om] = [om, - sin th]
 
-case odeSolve pendulum [1.0, 0.0] 0.0 20.0 of     -- NDSolve, calling back into Idris
+case nDSolve pendulum [1.0, 0.0] 0.0 20.0 of     -- NDSolve, calling back into Idris
   Left err => putStrLn err                        -- e.g. "NDSolve: Encountered non-numerical value ..."
   Right s  => printLn (sample s 20.0)             -- Just [0.9958..., 0.0840...]
 
-dsolve "t" ["x", "v"] [var "v", - var "x"] [1, 0] 0   -- Just [Cos[t], -Sin[t]] (DSolve)
+dSolve "t" ["x", "v"] [var "v", - var "x"] [1, 0] 0   -- Just [Cos[t], -Sin[t]] (DSolve)
 ```
 
 A solution that blows up stops where the solver stopped (`domain`,
@@ -206,18 +206,22 @@ Each run pays ~14 s of Wolfram kernel startup.
 
 ## The wrapper library
 
-`import` from package `wolfram` (`-p wolfram`):
+`import` from package `wolfram` (`-p wolfram`). A wrapper is named after
+the Wolfram function with its first letter lowercased (`LinearSolve` →
+`linearSolve`, `NDSolve` → `nDSolve`); it keeps a `wl` prefix only where
+the plain name would clash with Idris's Prelude or a keyword (`wlSort`,
+`wlMap`, `wlTotal`) or is a single letter (`wlD`, `wlN`).
 
 | Module | What it gives |
 |---|---|
 | `Wolfram.FFI` | `Marshal` (Idris value ↔ Wolfram expression, checked), `toWL`, `fromWL`, `fromWLMaybe`, `fromWLEither`, `fromText`, `record1`…`record5`, `refine`, `WLExpr`, `Complex` |
-| `Wolfram.List` | `wlSelect`, `wlMap`, `wlSort`, `wlLength`, `wlTotal` |
-| `Wolfram.LinAlg` | `Matrix m n`, `wlDet`, `wlLinearSolve`, `wlLeastSquares`, `wlEigenvalues`, `wlRoots` |
+| `Wolfram.List` | `select`, `wlMap`, `wlSort`, `wlLength`, `wlTotal` |
+| `Wolfram.LinAlg` | `Matrix m n`, `det`, `linearSolve`, `leastSquares`, `eigenvalues`, `roots` |
 | `Wolfram.Symbolic` | `Expr` and its typed builders (`var`, `+ - * / ^`, `sin`, `exp`, `pi`, …), `view` |
 | `Wolfram.Symbolic.Unsafe` | `apply "BesselJ" [n, x]`: build with any Wolfram function, by name |
-| `Wolfram.Calculus` | `wlD`, `wlIntegrate`, `wlTaylor`, `wlSolve`, `wlSimplify`, `wlExpand`, `wlFactor`, `wlSubst`, `wlN`, `wlExportPlot` |
-| `Wolfram.Data` | `wlImportCSV`, `wlImportJSON`, `validateRows`, `validateItems`, `wlGroupBy`, `wlMean`, `wlMedian`, `wlExportBarChart` |
-| `Wolfram.ODE` | `odeSolve` (Idris right-hand side), `odeSolveSym` (symbolic), `dsolve` (exact), `sample`, `table`, `domain`, `stopReason`, `wlExportSolutionPlot` |
+| `Wolfram.Calculus` | `wlD`, `integrate`, `taylor`, `solve`, `simplify`, `expand`, `factor`, `subst`, `wlN`, `exportPlot` |
+| `Wolfram.Data` | `importCSV`, `importJSON`, `validateRows`, `validateItems`, `wlGroupBy`, `mean`, `median`, `exportBarChart` |
+| `Wolfram.ODE` | `nDSolve` (Idris right-hand side), `nDSolveSym` (symbolic), `dSolve` (exact), `sample`, `table`, `domain`, `stopReason`, `exportSolutionPlot` |
 | `Wolfram.Export` | `library`, `fn1`…`fn3`, `fnIO1`…`fnIO3`: exports for paclets |
 
 ### Writing a wrapper
@@ -230,8 +234,8 @@ promises:
 %foreign "wolfram:Select"
 prim__select : WLExpr -> WLExpr -> WLExpr
 
-wlSelect : Marshal a => (a -> Bool) -> Vect n a -> (p ** Vect p a)
-wlSelect p xs = let ys : List a = fromWL (prim__select (toWL (toList xs)) (toWL p))
+select : Marshal a => (a -> Bool) -> Vect n a -> (p ** Vect p a)
+select p xs = let ys : List a = fromWL (prim__select (toWL (toList xs)) (toWL p))
                 in (_ ** fromList ys)
 ```
 

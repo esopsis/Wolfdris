@@ -21,13 +21,13 @@ fitEntry _ [] _ = Left "fit needs at least one point"
 fitEntry d (x :: xs) ys
     = case exactLength (S (length xs)) (fromList ys) of
         Nothing => Left "xs and ys differ in length"
-        Just vy => Right (toList (wlLeastSquares (map (powers d) (fromList (x :: xs))) vy))
+        Just vy => Right (toList (leastSquares (map (powers d) (fromList (x :: xs))) vy))
 
 ||| roots[coeffs]: the roots of a polynomial, lowest-degree coefficient first.
 rootsEntry : List Double -> Either String (List Complex)
 rootsEntry [] = Left "roots needs at least one coefficient"
 rootsEntry (c :: cs)
-    = case wlRoots (fromList (c :: cs)) of
+    = case roots (fromList (c :: cs)) of
         Nothing => Left "the leading coefficient is 0"
         Just rs => Right (toList rs)
 
@@ -38,7 +38,7 @@ solveEntry rows b
         Nothing => Left "every row of the matrix must have as many entries as b"
         Just rs => case exactLength (length b) (fromList rs) of
           Nothing => Left "the matrix must have as many rows as b"
-          Just a => case wlLinearSolve a (fromList b) of
+          Just a => case linearSolve a (fromList b) of
             Nothing => Left "no solution"
             Just x => Right (toList x)
 

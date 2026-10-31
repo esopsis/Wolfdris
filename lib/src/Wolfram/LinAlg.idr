@@ -39,37 +39,37 @@ prim__roots : WLExpr -> WLExpr
 
 ||| The determinant (`Det`).
 export
-wlDet : Matrix n n -> Double
-wlDet a = fromWL (prim__det (toWL (rows a)))
+det : Matrix n n -> Double
+det a = fromWL (prim__det (toWL (rows a)))
 
 ||| An x with a x = b (`LinearSolve`), or Nothing if there is none. For a
 ||| singular but consistent system, WL picks one of the solutions.
 export
-wlLinearSolve : Matrix n n -> Vect n Double -> Maybe (Vect n Double)
-wlLinearSolve a b
-    = map (withLengthOf "wlLinearSolve" b)
+linearSolve : Matrix n n -> Vect n Double -> Maybe (Vect n Double)
+linearSolve a b
+    = map (withLengthOf "linearSolve" b)
           (fromWLMaybe (prim__linearSolve (toWL (rows a)) (toWL (toList b))))
 
 ||| The x minimising |a x - b| (`LeastSquares`). At least one row, so the
 ||| number of columns can be checked.
 export
-wlLeastSquares : Matrix (S m) n -> Vect (S m) Double -> Vect n Double
-wlLeastSquares a b
-    = withLengthOf "wlLeastSquares" (head a)
+leastSquares : Matrix (S m) n -> Vect (S m) Double -> Vect n Double
+leastSquares a b
+    = withLengthOf "leastSquares" (head a)
         (fromWL (prim__leastSquares (toWL (rows a)) (toWL (toList b))))
 
 ||| The n eigenvalues, with multiplicity (`Eigenvalues`: largest absolute
 ||| value first).
 export
-wlEigenvalues : Matrix n n -> Vect n Complex
-wlEigenvalues a = withLengthOf "wlEigenvalues" a (fromWL (prim__eigenvalues (toWL (rows a))))
+eigenvalues : Matrix n n -> Vect n Complex
+eigenvalues a = withLengthOf "eigenvalues" a (fromWL (prim__eigenvalues (toWL (rows a))))
 
 ||| The d roots, with multiplicity, of the degree-d polynomial with these
 ||| coefficients (lowest degree first, `NSolve`), or Nothing if the leading
 ||| coefficient is 0 (then the degree is lower than d).
 export
-wlRoots : Vect (S d) Double -> Maybe (Vect d Complex)
-wlRoots cs
+roots : Vect (S d) Double -> Maybe (Vect d Complex)
+roots cs
     = if last cs == 0
          then Nothing
-         else Just (withLengthOf "wlRoots" (init cs) (fromWL (prim__roots (toWL (toList cs)))))
+         else Just (withLengthOf "roots" (init cs) (fromWL (prim__roots (toWL (toList cs)))))

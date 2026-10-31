@@ -54,16 +54,16 @@ maybeOne r = case the (List a) (fromWL r) of
   _ => Nothing
 
 export
-wlSimplify : Expr -> Expr
-wlSimplify e = fromWL (prim__simplify (toWL e))
+simplify : Expr -> Expr
+simplify e = fromWL (prim__simplify (toWL e))
 
 export
-wlExpand : Expr -> Expr
-wlExpand e = fromWL (prim__expand (toWL e))
+expand : Expr -> Expr
+expand e = fromWL (prim__expand (toWL e))
 
 export
-wlFactor : Expr -> Expr
-wlFactor e = fromWL (prim__factor (toWL e))
+factor : Expr -> Expr
+factor e = fromWL (prim__factor (toWL e))
 
 ||| The derivative with respect to a variable (`D`).
 export
@@ -72,32 +72,32 @@ wlD e x = fromWL (prim__d (toWL e) (toWL (var x)))
 
 ||| An antiderivative (`Integrate`), or Nothing if WL finds no closed form.
 export
-wlIntegrate : Expr -> (x : String) -> Maybe Expr
-wlIntegrate e x = maybeOne (prim__integrate (toWL e) (toWL (var x)))
+integrate : Expr -> (x : String) -> Maybe Expr
+integrate e x = maybeOne (prim__integrate (toWL e) (toWL (var x)))
 
 ||| The coefficients of the Taylor polynomial of order n around `at`
 ||| (`Series`): exactly n + 1 of them, lowest power first. Nothing if the
 ||| expression has no power series there.
 export
-wlTaylor : (n : Nat) -> Expr -> (x : String) -> (at : Expr) -> Maybe (Vect (S n) Expr)
-wlTaylor n e x a
+taylor : (n : Nat) -> Expr -> (x : String) -> (at : Expr) -> Maybe (Vect (S n) Expr)
+taylor n e x a
     = map check (maybeOne (prim__taylor (toWL e) (toWL (var x)) (toWL a) (natToInteger n)))
   where
     check : List Expr -> Vect (S n) Expr
     check cs = case exactLength (S n) (fromList cs) of
       Just v => v
-      Nothing => assert_total $ idris_crash "wlTaylor: wrong number of coefficients"
+      Nothing => assert_total $ idris_crash "taylor: wrong number of coefficients"
 
 ||| The solutions of lhs == rhs for a variable (`Solve`), or Nothing if WL
 ||| can't solve it. `Just []` means there are no solutions.
 export
-wlSolve : (lhs, rhs : Expr) -> (x : String) -> Maybe (List Expr)
-wlSolve l r x = maybeOne (prim__solve (toWL l) (toWL r) (toWL (var x)))
+solve : (lhs, rhs : Expr) -> (x : String) -> Maybe (List Expr)
+solve l r x = maybeOne (prim__solve (toWL l) (toWL r) (toWL (var x)))
 
 ||| Replace a variable by an expression.
 export
-wlSubst : Expr -> (x : String) -> Expr -> Expr
-wlSubst e x v = fromWL (prim__subst (toWL e) (toWL (var x)) (toWL v))
+subst : Expr -> (x : String) -> Expr -> Expr
+subst e x v = fromWL (prim__subst (toWL e) (toWL (var x)) (toWL v))
 
 ||| The numeric value (`N`), or Nothing unless it is a real number.
 export
@@ -108,5 +108,5 @@ wlN e = maybeOne (prim__n (toWL e))
 ||| format follows the extension, e.g. .png, .pdf). False if WL couldn't.
 ||| The first export in a session starts WL's front end (several seconds).
 export
-wlExportPlot : HasIO io => (file : String) -> Expr -> (x : String) -> (lo, hi : Double) -> io Bool
-wlExportPlot file e x lo hi = primIO (prim__exportPlot file (toWL e) (toWL (var x)) lo hi)
+exportPlot : HasIO io => (file : String) -> Expr -> (x : String) -> (lo, hi : Double) -> io Bool
+exportPlot file e x lo hi = primIO (prim__exportPlot file (toWL e) (toWL (var x)) lo hi)

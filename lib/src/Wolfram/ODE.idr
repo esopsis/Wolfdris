@@ -51,20 +51,20 @@ mkSolution y0 t0 t1 r
 ||| to stop early (a blow-up), the solution covers the part it solved; see
 ||| `stopReason`. t1 may be before t0.
 export
-odeSolve : (rhs : Double -> Vect n Double -> Vect n Double) -> (y0 : Vect n Double) ->
+nDSolve : (rhs : Double -> Vect n Double -> Vect n Double) -> (y0 : Vect n Double) ->
            (t0, t1 : Double) -> Either String (Solution n)
-odeSolve rhs y0 t0 t1 = mkSolution y0 t0 t1 (prim__odeSolve (fun2 f) (toWL (toList y0)) t0 t1)
+nDSolve rhs y0 t0 t1 = mkSolution y0 t0 t1 (prim__odeSolve (fun2 f) (toWL (toList y0)) t0 t1)
   where
     f : Double -> List Double -> List Double
-    f t ys = toList (rhs t (withLengthOf "odeSolve" y0 ys))
+    f t ys = toList (rhs t (withLengthOf "nDSolve" y0 ys))
 
-||| Like `odeSolve`, for a system given symbolically: variable `vars[i]` has
+||| Like `nDSolve`, for a system given symbolically: variable `vars[i]` has
 ||| derivative `rhs[i]` with respect to the time variable t, e.g.
-||| `odeSolveSym "t" ["x", "v"] [var "v", - sin (var "x")] [1.0, 0.0] 0.0 20.0`.
+||| `nDSolveSym "t" ["x", "v"] [var "v", - sin (var "x")] [1.0, 0.0] 0.0 20.0`.
 export
-odeSolveSym : (t : String) -> (vars : Vect n String) -> (rhs : Vect n Expr) ->
+nDSolveSym : (t : String) -> (vars : Vect n String) -> (rhs : Vect n Expr) ->
               (y0 : Vect n Double) -> (t0, t1 : Double) -> Either String (Solution n)
-odeSolveSym t vars rhs y0 t0 t1
+nDSolveSym t vars rhs y0 t0 t1
     = mkSolution y0 t0 t1
         (prim__odeSolveSym (toWL (var t)) (toWL (toList (map var vars))) (toWL (toList rhs))
            (toWL (toList y0)) t0 t1)
@@ -73,13 +73,13 @@ odeSolveSym t vars rhs y0 t0 t1
 ||| at t = t0 (`DSolve`): each variable as an expression in t. Nothing if
 ||| WL finds no closed form, or more than one solution.
 export
-dsolve : (t : String) -> (vars : Vect n String) -> (rhs : Vect n Expr) ->
+dSolve : (t : String) -> (vars : Vect n String) -> (rhs : Vect n Expr) ->
          (y0 : Vect n Expr) -> (t0 : Expr) -> Maybe (Vect n Expr)
-dsolve t vars rhs y0 t0
+dSolve t vars rhs y0 t0
     = case the (List (List Expr))
              (fromWL (prim__dsolve (toWL (var t)) (toWL (toList (map var vars)))
                         (toWL (toList rhs)) (toWL (toList y0)) (toWL t0))) of
-        [ys] => Just (withLengthOf "dsolve" vars ys)
+        [ys] => Just (withLengthOf "dSolve" vars ys)
         _ => Nothing
 
 ||| The time span solved, (t0, tEnd), in the direction of integration.
@@ -117,6 +117,6 @@ table (MkSolution y0 t0 tEnd _ h) k
 ||| component. False if WL couldn't. The first export in a session starts
 ||| WL's front end (several seconds).
 export
-wlExportSolutionPlot : HasIO io => (file : String) -> Solution n -> (labels : Vect n String) -> io Bool
-wlExportSolutionPlot file (MkSolution _ t0 tEnd _ h) labels
+exportSolutionPlot : HasIO io => (file : String) -> Solution n -> (labels : Vect n String) -> io Bool
+exportSolutionPlot file (MkSolution _ t0 tEnd _ h) labels
     = primIO (prim__exportPlot file h (min t0 tEnd) (max t0 tEnd) (toWL (toList labels)))

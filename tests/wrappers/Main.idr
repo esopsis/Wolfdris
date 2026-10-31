@@ -12,7 +12,7 @@ xs = [5, 3, 8, 1, 9, 2, 7, 4, 6, 0]
 
 main : IO ()
 main = do
-  let (p ** ys) = wlSelect (\x => x > 4) xs
+  let (p ** ys) = select (\x => x > 4) xs
   printLn (p, ys)
   -- a callback closing over a local
   let k = 3
@@ -32,8 +32,8 @@ main = do
   -- Against the Idris equivalents, on bigger inputs
   let big = fromList (map (\i => (i * 7919) `mod` 20011) [1 .. 5000])
   printLn (toList (wlSort big) == sort (toList big))
-  printLn (toList (snd (wlSelect (\x => x `mod` 3 == 0) big)) == filter (\x => x `mod` 3 == 0) (toList big))
-  printLn (fst (wlSelect (\x => x `mod` 3 == 0) big) == length (filter (\x => x `mod` 3 == 0) (toList big)))
+  printLn (toList (snd (select (\x => x `mod` 3 == 0) big)) == filter (\x => x `mod` 3 == 0) (toList big))
+  printLn (fst (select (\x => x `mod` 3 == 0) big) == length (filter (\x => x `mod` 3 == 0) (toList big)))
   printLn (toList (wlMap (+ 1) big) == map (+ 1) (toList big))
   printLn (wlTotal big == sum big)
   printLn (wlLength (toList big) == 5000)

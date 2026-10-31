@@ -57,7 +57,7 @@ totalsOf sales = map (\(r, ss) => (show r, sum (map amount ss))) (wlGroupBy regi
 ||| summarize[file]: read and validate a CSV of sales (IO).
 summarize : String -> IO (Either String Summary)
 summarize file = do
-  Right rows <- wlImportCSV file
+  Right rows <- importCSV file
     | Left e => pure (Left e)
   let (sales, bad) = validateRows {r = Sale} rows
   pure $ Right $ MkSummary (length sales)
@@ -71,10 +71,10 @@ deriv e x = case varName x of
   Nothing => Left "the second argument must be a variable"
 
 ||| taylor[expr, x, n]: the n + 1 Taylor coefficients at 0.
-taylor : Expr -> Expr -> Nat -> Either String (List Expr)
-taylor e x n = case varName x of
+taylorEntry : Expr -> Expr -> Nat -> Either String (List Expr)
+taylorEntry e x n = case varName x of
   Nothing => Left "the second argument must be a variable"
-  Just v => maybe (Left "no power series at 0") (Right . toList) (wlTaylor n e v 0)
+  Just v => maybe (Left "no power series at 0") (Right . toList) (taylor n e v 0)
 
 ||| boomIO[n]: prints, then crashes for n > 0 (an IO export's crash is a
 ||| Failure too).
@@ -88,5 +88,5 @@ main = library
   [ fn1 "totals" "totals[sales] gives per-region totals of a list of sales." totalsOf
   , fnIO1 "summarize" "summarize[file] reads and validates a CSV of sales." summarize
   , fn2 "deriv" "deriv[expr, x] differentiates expr with respect to x." deriv
-  , fn3 "taylor" "taylor[expr, x, n] gives the Taylor coefficients of expr at 0 up to x^n." taylor
+  , fn3 "taylor" "taylor[expr, x, n] gives the Taylor coefficients of expr at 0 up to x^n." taylorEntry
   , fnIO1 "boomIO" "boomIO[n] prints, then crashes for n > 0." boomIO ]

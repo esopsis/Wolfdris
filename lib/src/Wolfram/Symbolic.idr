@@ -49,7 +49,7 @@ Show Expr where
 prim__sameQ : WLExpr -> WLExpr -> Bool
 
 ||| Structural equality. WL results are canonical, so compare them after
-||| `wlSimplify` or `wlExpand` to test mathematical equality.
+||| `simplify` or `expand` to test mathematical equality.
 export
 Eq Expr where
   a == b = prim__sameQ (toWL a) (toWL b)

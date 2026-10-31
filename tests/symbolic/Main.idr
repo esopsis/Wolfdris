@@ -53,28 +53,28 @@ main : IO ()
 main = do
   putStrLn $ "f = " ++ show f
   putStrLn $ "f' = " ++ show (wlD f "x")
-  case wlIntegrate f "x" of
+  case integrate f "x" of
     Nothing => putStrLn "no antiderivative"
     Just big => do
       putStrLn $ "integral of f = " ++ show big
-      putStrLn $ "derivative of the integral is f: " ++ show (wlSimplify (wlD big "x" - f) == 0)
-  let gauss = wlIntegrate (exp (negate (x ^ 2))) "x"
+      putStrLn $ "derivative of the integral is f: " ++ show (simplify (wlD big "x" - f) == 0)
+  let gauss = integrate (exp (negate (x ^ 2))) "x"
   putStrLn $ "integral of e^-x^2 = " ++ show gauss
   putStrLn $ "its heads: " ++ show (maybe [] heads gauss)
-  putStrLn $ "integral of sin x / x^x = " ++ show (wlIntegrate (sin x / x ^ x) "x")
-  putStrLn $ "Taylor e^x, order 4: " ++ show (map toList (wlTaylor 4 (exp x) "x" 0))
-  putStrLn $ "Taylor log x at 0: " ++ show (map toList (wlTaylor 2 (log x) "x" 0))
-  putStrLn $ "Taylor 1/(1-x), order 3: " ++ show (map toList (wlTaylor 3 (1 / (1 - x)) "x" 0))
-  putStrLn $ "solve x^2 == 2: " ++ show (wlSolve (x ^ 2) 2 "x")
-  putStrLn $ "solve x^2 == -1: " ++ show (wlSolve (x ^ 2) (-1) "x")
-  putStrLn $ "solve sin x == x^3 + e^x: " ++ show (wlSolve (sin x) (x ^ 3 + exp x) "x")
-  case view (wlExpand ((x + 1) ^ 5)) of
+  putStrLn $ "integral of sin x / x^x = " ++ show (integrate (sin x / x ^ x) "x")
+  putStrLn $ "Taylor e^x, order 4: " ++ show (map toList (taylor 4 (exp x) "x" 0))
+  putStrLn $ "Taylor log x at 0: " ++ show (map toList (taylor 2 (log x) "x" 0))
+  putStrLn $ "Taylor 1/(1-x), order 3: " ++ show (map toList (taylor 3 (1 / (1 - x)) "x" 0))
+  putStrLn $ "solve x^2 == 2: " ++ show (solve (x ^ 2) 2 "x")
+  putStrLn $ "solve x^2 == -1: " ++ show (solve (x ^ 2) (-1) "x")
+  putStrLn $ "solve sin x == x^3 + e^x: " ++ show (solve (sin x) (x ^ 3 + exp x) "x")
+  case view (expand ((x + 1) ^ 5)) of
     VAdd ts => putStrLn $ "(x + 1)^5 expands to " ++ show (length ts) ++ " terms"
     _ => putStrLn "not a sum"
-  putStrLn $ "factor x^2 - 1: " ++ show (wlFactor (x ^ 2 - 1))
-  putStrLn $ "f at pi/2: " ++ show (wlSubst f "x" (pi / 2))
-  putStrLn $ "numerically: " ++ show (map fixed6 (wlN (wlSubst f "x" (pi / 2))))
+  putStrLn $ "factor x^2 - 1: " ++ show (factor (x ^ 2 - 1))
+  putStrLn $ "f at pi/2: " ++ show (subst f "x" (pi / 2))
+  putStrLn $ "numerically: " ++ show (map fixed6 (wlN (subst f "x" (pi / 2))))
   putStrLn $ "BesselJ[0, 1] = " ++ show (map fixed6 (wlN (besselJ 0 1)))
   putStrLn $ "a symbol isn't a number: " ++ show (wlN x)
-  ok <- wlExportPlot "build/plot.png" f "x" (-3.0) 3.0
+  ok <- exportPlot "build/plot.png" f "x" (-3.0) 3.0
   putStrLn $ "plot exported: " ++ show ok ++ ", file exists: " ++ show (fileExists "build/plot.png")
