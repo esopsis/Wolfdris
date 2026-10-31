@@ -157,9 +157,9 @@ Experimental, but substantial and tested:
 
 - **The backend** compiles all of Idris's primitives and runtime model
   (closures, laziness, IORefs, files, IEEE doubles, unlimited recursion
-  depth). It passes **97–98 of 108** of Idris 2's own test programs run
-  against it (the rest: `Data.Buffer`, processes, and two or three that
-  exceed the time limit) — see [docs/conformance.md](docs/conformance.md).
+  depth). It passes **99 of 108** of Idris 2's own test programs run
+  against it (the rest: `Data.Buffer`, processes, and one that
+  exceeds the time limit) — see [docs/conformance.md](docs/conformance.md).
 - **18 tests** in `tests/`: differential tests (same output as Idris's
   Chez backend, byte for byte) and golden tests for the wrapper library,
   paclets, symbolic math, data import and differential equations.
@@ -283,10 +283,9 @@ Wolfram behaviours found along the way — is [CLAUDE.md](CLAUDE.md).
 - **Slow.** Every small Idris function becomes several Wolfram calls
   (~1–3 µs each). Fine when Idris orchestrates and the heavy computation
   happens inside Wolfram functions; not for number crunching in Idris.
-  An Idris right-hand side for `NDSolve` costs ~0.3 ms per evaluation
-  for a small system, ~3.5 ms for a 12-variable one (mostly `Double`
-  arithmetic, ~35 µs per operation today); a symbolic system avoids the
-  callbacks.
+  An Idris right-hand side for `NDSolve` costs ~0.15 ms per evaluation
+  for a small system, ~1.4 ms for a 12-variable one (~5 µs per `Double`
+  operation); a symbolic system avoids the callbacks.
 - **The trusted base is large.** Each wrapper asserts facts the type
   checker can't verify (Wolfram functions are black boxes). Runtime
   checks catch wrong shapes, not wrong meanings.

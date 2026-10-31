@@ -352,6 +352,16 @@ doubleUnitRoundoff[] := $MachineEpsilon/2;
 (* ---- Anything else ---- *)
 op[keys__][___] := crash["not implemented: " <> StringRiffle[{keys}, " "]];
 
+(* Dispatch. WL tries an op's SubValues one by one, so an op defined late
+   cost ~30 us just to be found (364 rules). Each rule moves to a symbol of
+   its own, reached through a DownValue op[keys] = sym, which WL looks up
+   by hash (~0.6 us). Keys without a rule stay unevaluated and reach the
+   catch-all above. *)
+Scan[Replace[#, Verbatim[RuleDelayed][Verbatim[HoldPattern][HoldPattern[op[ks__String][as___]]], rhs_] :>
+    With[{s = Unique["opFn"]}, op[ks] = s; s[as] := rhs]] &,
+  Most[SubValues[op]]];
+SubValues[op] = {Last[SubValues[op]]};
+
 (* ---- Foreign functions (see src/Wolfdris/Foreign.idr) ---- *)
 putStr[s_, _] := (WriteString[$Output, s]; unit);
 putChar[c_, _] := (WriteString[$Output, FromCharacterCode[c]]; unit);

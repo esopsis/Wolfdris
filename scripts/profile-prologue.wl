@@ -8,9 +8,10 @@ profMain[main_] := Module[{syms, t},
       DownValues[s] = Prepend[DownValues[s],
         HoldPattern[s[___]] :> Null /; (profCount[name] = Lookup[profCount, name, 0] + 1; False)]] &,
     syms];
-  (* primitives: one counter per (op, type) *)
-  SubValues[WolfdrisRT`op] = Prepend[SubValues[WolfdrisRT`op],
-    HoldPattern[WolfdrisRT`op[k__][___]] :> Null /;
+  (* primitives: one counter per (op, type); op[keys] is evaluated once
+     per call (it dispatches to the op's own symbol) *)
+  DownValues[WolfdrisRT`op] = Prepend[DownValues[WolfdrisRT`op],
+    HoldPattern[WolfdrisRT`op[k__]] :> Null /;
       (profCount[{k}] = Lookup[profCount, Key[{k}], 0] + 1; False)];
   t = First[AbsoluteTiming[TimeConstrained[CheckAbort[main, Print["aborted"]], 600, Print["timeout"]]]];
   Print["---- ", Round[t, 0.1], " s, ", Total[profCount], " counted calls"];

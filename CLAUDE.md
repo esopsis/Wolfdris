@@ -496,8 +496,9 @@ solution** when the solver stops early.
   Idris right-hand side: ~0.3 ms per evaluation for 2 variables, ~3.5 ms
   for the 12-variable 3-body (10 periods: 15.7 s; native WL: 0.3 s). This
   passes the agreed "> 10 s in callbacks" trigger, **but the cost is not
-  CPS call overhead** (~270 calls ≈ 0.5 ms per evaluation): it is the
-  primitive table — see "Speed".
+  CPS call overhead** (~270 calls ≈ 0.5 ms per evaluation): it was the
+  primitive table's dispatch — fixed, see "Speed"; now ~1.4 ms per
+  3-body evaluation (10 periods: 6.4 s).
 
 ### Speed (2026-10-24)
 
@@ -521,18 +522,20 @@ Measured on the three "too slow" conformance tests (scaled-down copies,
   whose catch-all crashes.
 - Result: newints-style work ~2× faster, json ~1.3×, bind ~1.1×; full
   newints estimated ~340 s, json_001 ~530 s; bind001 is borderline (290–330 s against the 300 s limit).
-- **Found 2026-10-30 (ODE step), not yet fixed: the `op` table's
-  dispatch is slow for ops defined late.** `op` has 364 SubValues; a
-  `Double` op through it costs ~35 µs, the same rule in a symbol of its
-  own 5.3 µs, and behind a hashed DownValue lookup (`disp["Mul",
-  "Double"] = mulD`) 5.9 µs (WL 15.1, `wolframscript`). Int64 add: 6.5
-  µs; `Div` Integer 9.9; `DoubleSin` 37. Apparently WL tries the
-  SubValues rules in turn. `DoublePow` is 132 µs (its 40-digit path).
-  The earlier "~0.9 µs per table call" was measured on early-defined
-  integer ops. Fix candidate: `op[keys]` → a per-op symbol via DownValues
-  (hashed), keeping the catch-all crash for missing keys. Estimated 3-body
-  callback 3.5 → ~2 ms; would also speed every Double/String-heavy
-  conformance test.
+- **Fixed 2026-10-30: the `op` table's dispatch was slow for ops defined
+  late** (found in the ODE step). WL tries a symbol's SubValues rules one
+  by one: with 364 of them a `Double` op cost ~35 µs, the same rule in a
+  symbol of its own 5.3 µs. (The earlier "~0.9 µs per table call" was
+  measured on early-defined integer ops.) Now, at the end of the table,
+  every `op[keys…][args] := rhs` rule moves to a fresh symbol
+  (`opFn123[args] := rhs`), reached through a DownValue `op[keys…] =
+  opFn123`, which WL looks up by hash; only the catch-all crash stays a
+  SubValue, so a missing primitive still fails loudly. Definitions stay
+  written as before. WL 15.1: Double multiply 35 → 4.8 µs, `DoubleSin`
+  37 → 9.7, Int64 add 6.5 → 3.2, `Div` Integer 9.9 → 4.5, `DoublePow`
+  132 → 85 (its 40-digit path is the rest). 3-body ODE callback, 10
+  periods: 15.7 → 6.4 s. `scripts/profile.sh` counts ops through a
+  DownValue of `op` accordingly.
 - **Not done (decided with the user): direct style for non-recursive
   leaf functions** (~1.35 µs saved per call, est. 1.3–1.5× more). Do it
   together with readable mode, or when a real program needs the speed:
@@ -621,7 +624,7 @@ wrappers to primitive element types.
    stdin, IORefs/arrays done; 8/8 differential tests pass.
    **Conformance 2026-10-22:** Idris's own test suite runs against us
    (`scripts/conformance.sh`, [docs/conformance.md](docs/conformance.md)):
-   **96/108 pass**; after step 4: **97/108**; after the speed work: **97–98/108** (bind001 is borderline at the time limit). Remaining buckets: speed,
+   **96/108 pass**; after step 4: **97/108**; after the speed work: **97–98/108**; after the op-table dispatch fix (2026-10-30): **99/108** (newints, bind001 now in time). Remaining buckets: speed,
    `Data.Buffer` (mechanical), processes (`system`/`popen`, needs a
    Windows-vs-WSL shell decision first).
 3. ✅ **Done 2026-10-24** — **FFI + first wrappers.** Marshalling both
