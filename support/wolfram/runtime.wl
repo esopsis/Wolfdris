@@ -757,5 +757,64 @@ fastPack[l_] := FromCharacterCode[conToList[l]];
 fastUnpack[s_] := listToCon[ToCharacterCode[s]];
 fastConcat[l_] := StringJoin[conToList[l]];
 
+(* ---- Differential equations (Wolfram.ODE) ---- *)
+(* A solution is a handle: what NDSolve returns, passed around as is. The
+   callback form solves for one vector-valued function; the symbolic form
+   gets one function per variable. Results are {handle, tEnd}, where tEnd
+   is how far the solver got (short of t1 after a blow-up), or a Failure,
+   which Idris reads as a Left. *)
+(* The Idris right-hand side is only called with numbers: NDSolve first
+   evaluates the equations with symbolic arguments *)
+odeRHS[cb_][t_?NumericQ, y_ /; VectorQ[y, NumericQ]] := cb[t, y];
+odeSolve[cb_, y0_, t0_, t1_] := Module[{y, t},
+  odeResult[firstMessage[NDSolve[{y'[t] == odeRHS[cb][t, y[t]], y[t0] == y0}, y, {t, t0, t1}]],
+    y, t0, t1]];
+odeSolveSym[t_, vars_, rhs_, y0_, t0_, t1_] := Module[{fs = odeFunctions[Length[vars]]},
+  odeResult[firstMessage[NDSolve[odeEqs[t, vars, rhs, y0, t0, fs], fs, {t, t0, t1}]],
+    fs, t0, t1]];
+(* exact: {solutions} if DSolve finds exactly one, else {} *)
+odeDSolve[t_, vars_, rhs_, y0_, t0_] := Module[{fs = odeFunctions[Length[vars]], r},
+  r = Quiet[DSolve[odeEqs[t, vars, rhs, y0, t0, fs], fs, t]];
+  If[MatchQ[r, {{(_ -> _Function) ..}}], {Simplify[Through[fs[t]] /. r[[1]]]}, {}]];
+odeFunctions[n_] := Table[Module[{f}, f], n];
+(* x' == rhs for each variable, with every variable x replaced by f[t] *)
+odeEqs[t_, vars_, rhs_, y0_, t0_, fs_] := Join[
+  Thread[Through[(Derivative[1] /@ fs)[t]] == (rhs /. Thread[vars -> Through[fs[t]]])],
+  Thread[Through[fs[t0]] == y0]];
+odeResult[{r : {{(_ -> _InterpolatingFunction) ..}}, _}, f_, t0_, t1_] := With[{h = f /. r[[1]]},
+  {h, odeEnd[First[Flatten[{h}]]["Domain"], t0, t1]}];
+odeResult[{_, m_}, __] := idrisFailure["NDSolve: " <> messageText[m]];
+odeEnd[{{a_, b_}}, t0_, t1_] := If[t1 >= t0, b, a];
+odeAt[h_List, t_] := Through[h[t]];
+odeAt[h_, t_] := h[t];
+odeTable[h_, a_, b_, 0] := {{a, odeAt[h, a]}};
+odeTable[h_, a_, b_, k_] := Table[With[{t = a + (b - a) i/k}, {t, odeAt[h, t]}], {i, 0, k}];
+(* one curve per component, also from a single vector-valued function *)
+odeExportPlot[file_, h_, a_, b_, labels_] := Module[{t},
+  Boole[Quiet[Check[Export[file, Plot[Evaluate[odeCurves[h, t, Length[labels]]], {t, a, b},
+    PlotLegends -> labels, AxesLabel -> {"t", None}]], $Failed]] =!= $Failed]];
+odeCurves[h_List, t_, _] := Through[h[t]];
+odeCurves[f_, t_, n_] := Table[Indexed[f[t], i], {i, n}];
+
+(* Evaluate, remembering the first message WL issues (for error text) *)
+SetAttributes[firstMessage, HoldAll];
+firstMessage[e_] := Module[{m = {}, r},
+  r = Internal`HandlerBlock[{"Message", If[m === {}, m = {#}] &}, Quiet[e]];
+  {r, m}];
+messageText[{}] := "failed";
+messageText[{Hold[Message[MessageName[s_, tag_], args___], _]}] := With[
+    {tmpl = Replace[MessageName[s, tag], Except[_String] :> MessageName[General, tag]]},
+  If[StringQ[tmpl],
+    (* "at t == 0.." when an argument ends the sentence *)
+    StringReplace[ToString[StringForm[tmpl, Sequence @@ Map[messageArg, {args}]]], ".." ~~ EndOfString -> "."],
+    SymbolName[s] <> "::" <> tag]];
+messageText[_] := "failed";
+(* Arguments come wrapped in HoldCompleteForm; a Module variable t$123 is
+   shown as t *)
+messageArg[HoldCompleteForm[s_Symbol]] :=
+  StringDelete[SymbolName[Unevaluated[s]], "$" ~~ DigitCharacter .. ~~ EndOfString];
+messageArg[HoldCompleteForm[x_]] := x;
+messageArg[x_] := x;
+
 $ContextPath = WolfdrisRT`$savedContextPath;
 End[];

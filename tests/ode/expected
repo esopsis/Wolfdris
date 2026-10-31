@@ -1,0 +1,16 @@
+pendulum domain: (0.0, 20.0), stopped early: Nothing
+pendulum at t = 20: [0.9958, 0.0840]
+energy drift below 1e-5: True
+pendulum table: 0.0000 [1.0000, 0.0000]; 5.0000 [-0.0240, 0.9586]; 10.0000 [-0.9989, -0.0420]; 15.0000 [0.0718, -0.9562]; 20.0000 [0.9958, 0.0840]
+symbolic agrees within 1e-6: True
+plot exported: True, file exists: True
+conserved quantity drift below 1e-4: True
+exact: [Cos[t], -Sin[t]]
+numerical agrees with exact: True
+blow-up solved up to: 1.0000
+stop reason given: Just True
+at t = 0.5: [2.0000], at t = 1.5: Nothing
+backwards: (0.0, -1.0), y(-1) = [0.3679]
+NaN right-hand side: failed: NDSolve: Encountered non-numerical value for a derivative at t == 0.
+unknown parameter: failed: NDSolve: Encountered non-numerical value for a derivative at t == 0.
+figure eight back at the start after one period: Just True

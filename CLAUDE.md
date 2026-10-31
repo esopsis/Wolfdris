@@ -457,6 +457,48 @@ generated-code-style walks (pattern-substituted argument, `Switch[s[[1]],
 and the slow conformance tests scale linearly, so this is not what makes
 them slow. The trigger is still unknown.
 
+**Differential equations (step 5, fourth program, 2026-10-30).**
+`Wolfram.ODE`, `tests/ode` (golden, also the demo: pendulum, predator–prey,
+exact oscillator, a blow-up, failures, a figure-eight 3-body orbit, a
+plot). Decided with the user: **both input styles**, and a **partial
+solution** when the solver stops early.
+- `odeSolve rhs y0 t0 t1` with `rhs : Double -> Vect n Double -> Vect n
+  Double` (an Idris callback, `fun2` → `callback2`), `odeSolveSym t vars
+  rhs y0 t0 t1` (a symbolic system, `Vect n Expr`), both `Either String
+  (Solution n)`; `dsolve` (exact, `DSolve`; `Maybe`, Nothing unless
+  exactly one solution). A right-hand side of the wrong dimension doesn't
+  compile (checked).
+- **The first WL-side handle**: `Solution n` (constructor hidden) holds
+  what `NDSolve` returned — one vector-valued `InterpolatingFunction` for
+  the callback form, a list of them for the symbolic form (`odeAt`
+  handles both) — as a `WLExpr`, never converted, plus `y0` to check WL's
+  results against (no `n` needed at run time), `t0`, `tEnd`, `t1`.
+  `sample` (Nothing outside the solved span), `table`, `domain`,
+  `stopReason`, `wlExportSolutionPlot`.
+- Runtime glue (`runtime.wl`, "Differential equations"): `odeRHS[cb][t_?
+  NumericQ, y_ /; VectorQ[y, NumericQ]]` — NDSolve first evaluates the
+  equations symbolically, so the callback must only fire on numbers.
+  Results are `{handle, tEnd}` or an `idrisFailure`, read in Idris as
+  `Either String (WLExpr, Double)` (a `Failure` from WL is a `Left`).
+  `firstMessage` (`Internal`HandlerBlock`) keeps the first WL message for
+  the error text, e.g. `NDSolve: Encountered non-numerical value for a
+  derivative at t == 0.`; Module variables (`t$123`) print as `t`.
+- **WL facts:** a blow-up (y' = y²) still returns a solution, with its
+  domain ending at ~0.9999998 (`NDSolve::ndsz`); evaluating it outside the
+  domain silently extrapolates (f(1.5) ≈ 4·10⁴⁸) — hence `sample`'s
+  bounds check. A right-hand side giving NaN or the wrong length leaves
+  `NDSolve` unevaluated. Plotting a vector-valued `InterpolatingFunction`
+  as `f[t]` draws one curve: plot `Indexed[f[t], i]` per component.
+  Inside one `-code`/cell, `Begin[...]` doesn't affect symbols already
+  parsed — glue tests must use explicit contexts.
+- **Callback cost (measured, WL 15.1):** NDSolve evaluations: pendulum
+  0..20 459, Lotka–Volterra 0..100 2,720, figure eight 497 per period.
+  Idris right-hand side: ~0.3 ms per evaluation for 2 variables, ~3.5 ms
+  for the 12-variable 3-body (10 periods: 15.7 s; native WL: 0.3 s). This
+  passes the agreed "> 10 s in callbacks" trigger, **but the cost is not
+  CPS call overhead** (~270 calls ≈ 0.5 ms per evaluation): it is the
+  primitive table — see "Speed".
+
 ### Speed (2026-10-24)
 
 Measured on the three "too slow" conformance tests (scaled-down copies,
@@ -479,6 +521,18 @@ Measured on the three "too slow" conformance tests (scaled-down copies,
   whose catch-all crashes.
 - Result: newints-style work ~2× faster, json ~1.3×, bind ~1.1×; full
   newints estimated ~340 s, json_001 ~530 s; bind001 is borderline (290–330 s against the 300 s limit).
+- **Found 2026-10-30 (ODE step), not yet fixed: the `op` table's
+  dispatch is slow for ops defined late.** `op` has 364 SubValues; a
+  `Double` op through it costs ~35 µs, the same rule in a symbol of its
+  own 5.3 µs, and behind a hashed DownValue lookup (`disp["Mul",
+  "Double"] = mulD`) 5.9 µs (WL 15.1, `wolframscript`). Int64 add: 6.5
+  µs; `Div` Integer 9.9; `DoubleSin` 37. Apparently WL tries the
+  SubValues rules in turn. `DoublePow` is 132 µs (its 40-digit path).
+  The earlier "~0.9 µs per table call" was measured on early-defined
+  integer ops. Fix candidate: `op[keys]` → a per-op symbol via DownValues
+  (hashed), keeping the catch-all crash for missing keys. Estimated 3-body
+  callback 3.5 → ~2 ms; would also speed every Double/String-heavy
+  conformance test.
 - **Not done (decided with the user): direct style for non-recursive
   leaf functions** (~1.35 µs saved per call, est. 1.3–1.5× more). Do it
   together with readable mode, or when a real program needs the speed:
@@ -587,6 +641,9 @@ wrappers to primitive element types.
    `tests/data` (see "Data" under FFI marshalling).
    **Paclets round 2 2026-10-30:** IO exports, records and symbolic
    expressions from notebooks (`tests/paclet2`; Distribution → Paclets).
+   **ODEs 2026-10-30:** `Wolfram.ODE` (NDSolve/DSolve, the first WL-side
+   handle), `tests/ode` (see "Differential equations" under FFI
+   marshalling).
 
 ## The runtime is the bulk of the work
 

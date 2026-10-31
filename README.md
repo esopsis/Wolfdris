@@ -102,6 +102,25 @@ main = do
   for_ (wlGroupBy region sales) $ \(r, ss) => ...
 ```
 
+**Differential equations** (from [tests/ode](tests/ode/Main.idr)) — the
+system's dimension is in the types, so a right-hand side with the wrong
+number of components doesn't compile:
+
+```idris
+pendulum : Double -> Vect 2 Double -> Vect 2 Double
+pendulum _ [th, om] = [om, - sin th]
+
+case odeSolve pendulum [1.0, 0.0] 0.0 20.0 of     -- NDSolve, calling back into Idris
+  Left err => putStrLn err                        -- e.g. "NDSolve: Encountered non-numerical value ..."
+  Right s  => printLn (sample s 20.0)             -- Just [0.9958..., 0.0840...]
+
+dsolve "t" ["x", "v"] [var "v", - var "x"] [1, 0] 0   -- Just [Cos[t], -Sin[t]] (DSolve)
+```
+
+A solution that blows up stops where the solver stopped (`domain`,
+`stopReason`), and `sample` gives `Nothing` outside it instead of
+Wolfram's extrapolation.
+
 **Calling Idris from a notebook** (from [tests/paclet](tests/paclet/Main.idr)):
 
 ```idris
@@ -141,11 +160,12 @@ Experimental, but substantial and tested:
   depth). It passes **97–98 of 108** of Idris 2's own test programs run
   against it (the rest: `Data.Buffer`, processes, and two or three that
   exceed the time limit) — see [docs/conformance.md](docs/conformance.md).
-- **17 tests** in `tests/`: differential tests (same output as Idris's
+- **18 tests** in `tests/`: differential tests (same output as Idris's
   Chez backend, byte for byte) and golden tests for the wrapper library,
-  paclets, symbolic math and data import.
+  paclets, symbolic math, data import and differential equations.
 - **Wrapper library** (package `wolfram`): list functions, linear
-  algebra, symbolic calculus, data import and validation, charts and
+  algebra, symbolic calculus, differential equations, data import and
+  validation, charts and
   plots, paclet exports. Wrappers are added
   as programs need them; there is no attempt at a complete typed stdlib.
 
@@ -178,7 +198,7 @@ build/exec/hello                                      # runs it with wolframscri
 scripts/wolfdris -p wolfram --cg wolfram Main.idr -o main
 
 # tests
-scripts/test.sh               # all tests (~12 min), or name some: scripts/test.sh polyfit
+scripts/test.sh               # all tests (~13 min), or name some: scripts/test.sh polyfit
 scripts/conformance.sh        # Idris's own test suite (~35 min)
 ```
 
@@ -197,6 +217,7 @@ Each run pays ~14 s of Wolfram kernel startup.
 | `Wolfram.Symbolic.Unsafe` | `apply "BesselJ" [n, x]`: build with any Wolfram function, by name |
 | `Wolfram.Calculus` | `wlD`, `wlIntegrate`, `wlTaylor`, `wlSolve`, `wlSimplify`, `wlExpand`, `wlFactor`, `wlSubst`, `wlN`, `wlExportPlot` |
 | `Wolfram.Data` | `wlImportCSV`, `wlImportJSON`, `validateRows`, `validateItems`, `wlGroupBy`, `wlMean`, `wlMedian`, `wlExportBarChart` |
+| `Wolfram.ODE` | `odeSolve` (Idris right-hand side), `odeSolveSym` (symbolic), `dsolve` (exact), `sample`, `table`, `domain`, `stopReason`, `wlExportSolutionPlot` |
 | `Wolfram.Export` | `library`, `fn1`…`fn3`, `fnIO1`…`fnIO3`: exports for paclets |
 
 ### Writing a wrapper
@@ -262,6 +283,10 @@ Wolfram behaviours found along the way — is [CLAUDE.md](CLAUDE.md).
 - **Slow.** Every small Idris function becomes several Wolfram calls
   (~1–3 µs each). Fine when Idris orchestrates and the heavy computation
   happens inside Wolfram functions; not for number crunching in Idris.
+  An Idris right-hand side for `NDSolve` costs ~0.3 ms per evaluation
+  for a small system, ~3.5 ms for a 12-variable one (mostly `Double`
+  arithmetic, ~35 µs per operation today); a symbolic system avoids the
+  callbacks.
 - **The trusted base is large.** Each wrapper asserts facts the type
   checker can't verify (Wolfram functions are black boxes). Runtime
   checks catch wrong shapes, not wrong meanings.

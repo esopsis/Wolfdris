@@ -13,3 +13,4 @@ modules = Wolfram.FFI
         , Wolfram.Symbolic.Unsafe
         , Wolfram.Calculus
         , Wolfram.Data
+        , Wolfram.ODE
