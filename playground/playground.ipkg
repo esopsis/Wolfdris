@@ -1,0 +1,11 @@
+package playground
+
+-- A place to try Idris with the editor working: the Idris language server
+-- (idris2-lsp) needs an .ipkg next to (or above) the file it checks.
+-- Add a module by writing a .idr file here; build and run with
+--   ../scripts/wolfdris --cg wolfram -p wolfram Main.idr -o main
+depends = base, contrib, wolfram
+
+sourcedir = "."
+main = Main
+executable = main

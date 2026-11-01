@@ -1,3 +1,7 @@
 build/
 tests/*/*.out
 tests/*/*.log
+
+# Codex mirrors CLAUDE.md here; Claude Code keeps local settings here
+AGENTS.md
+.claude/

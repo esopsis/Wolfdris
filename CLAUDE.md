@@ -672,13 +672,33 @@ wrappers to primitive element types.
 ### Plan (agreed with the user, 2026-10-30), in order
 
 1. **Wrapper rename** to the naming convention above — done 2026-10-30.
-2. **Editor setup:** VS Code + the WSL extension + `idris2-lsp` built
-   against our Idris v0.8.0 (not yet verified that it builds; find the
-   matching release/commit). Check hover, errors and the interactive
-   commands (case split, add clause, holes) on a test program. The user
-   is new to Idris (reading *Type-Driven Development with Idris*, written
-   for Idris 1; the Idris 2 docs have a chapter-by-chapter "Updates
-   Required" section). Atom, which the book recommends, is discontinued.
+2. **Editor setup** — done 2026-11-01, working in the user's VS Code.
+   The user is new to Idris (reading *Type-Driven Development with
+   Idris*, written for Idris 1; the Idris 2 docs have a chapter-by-chapter
+   "Updates Required" section). Atom, which the book recommends, is
+   discontinued.
+   - **`idris2-lsp` has no tags and no 0.8.0 branch.** Built commit
+     `5d46d6e` with LSP-lib `ca77e80` (both cloned to `~/src`): the LSP
+     source is identical from `8134454` (pins an Idris 25 commits before
+     v0.8.0) to `800fe94` (pins one 29 after), so it builds against
+     v0.8.0. `idris2 --install-with-src lsp-lib.ipkg`, then `make
+     install` → `~/.idris2/bin/idris2-lsp` (reports `Idris2 API: 0.8.0`).
+     ~4 min. Checking needed the full Idris history
+     (`git fetch --unshallow` in `~/src/Idris2`).
+   - **The server needs an `.ipkg`** found from the file's folder upward;
+     our tests have none. Hence **`playground/`** (`playground.ipkg`:
+     `depends = base, contrib, wolfram`), a place for the user to try
+     Idris with the editor working. Open that folder, not the repo root.
+   - VS Code: WSL extension, open the folder through WSL, **trust the
+     folder** (Restricted Mode disables extensions), extension
+     `bamboo.idris2-lsp` installed in WSL. Hover shows the full origin
+     (`Wolfram.LinAlg.linearSolve : …`); case split works (Ctrl+.).
+   - **`AGENTS.md` is recreated by Codex**, a copy of CLAUDE.md, when it
+     imports Claude Code sessions (`~/.codex/external_agent_session_imports.json`).
+     The user keeps it; `.gitignore` has it and `.claude/`.
+   - Driving WSL from Git Bash: `wsl.exe … bash -c '…'` re-expands `$VARS`
+     on the Linux side; write a script file and run `wsl.exe -d Ubuntu --
+     bash /mnt/c/…/script.sh` (as for PowerShell).
 3. **Highlighting extension** (VS Code): colour every name the `wolfram`
    package exports, from a word list generated at build time. Hover
    (idris2-lsp) gives the exact origin.
