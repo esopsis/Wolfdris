@@ -5,7 +5,8 @@ brief = "Typed wrappers around the Wolfram Language, for the Wolfdris backend"
 sourcedir = "src"
 depends = base
 
-modules = Wolfram.FFI
+modules = Wolfram
+        , Wolfram.FFI
         , Wolfram.List
         , Wolfram.LinAlg
         , Wolfram.Export

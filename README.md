@@ -212,8 +212,16 @@ the Wolfram function with its first letter lowercased (`LinearSolve` →
 the plain name would clash with Idris's Prelude or a keyword (`wlSort`,
 `wlMap`, `wlTotal`) or is a single letter (`wlD`, `wlN`).
 
+`import Wolfram` brings in the whole library (every module below except
+the opt-in `Wolfram.Symbolic.Unsafe`); the modules can also be imported
+one by one. Any Wolfram function without a wrapper can still be called
+with a `%foreign "wolfram:Name"` declaration of your own (see "Writing a
+wrapper"). [playground/](playground/Main.idr) is a package set up for
+trying things in an editor with the Idris language server.
+
 | Module | What it gives |
 |---|---|
+| `Wolfram` | all of the modules below |
 | `Wolfram.FFI` | `Marshal` (Idris value ↔ Wolfram expression, checked), `toWL`, `fromWL`, `fromWLMaybe`, `fromWLEither`, `fromText`, `record1`…`record5`, `refine`, `WLExpr`, `Complex` |
 | `Wolfram.List` | `select`, `wlMap`, `wlSort`, `wlLength`, `wlTotal` |
 | `Wolfram.LinAlg` | `Matrix m n`, `det`, `linearSolve`, `leastSquares`, `eigenvalues`, `roots` |

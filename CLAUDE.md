@@ -699,6 +699,10 @@ wrappers to primitive element types.
    - Driving WSL from Git Bash: `wsl.exe … bash -c '…'` re-expands `$VARS`
      on the Linux side; write a script file and run `wsl.exe -d Ubuntu --
      bash /mnt/c/…/script.sh` (as for PowerShell).
+   - **`import Wolfram`** (added 2026-11-01, user's wish: "any function at
+     my fingertips") re-exports every module (`import public`) except the
+     opt-in `Symbolic.Unsafe`; the topic modules still import one by one.
+     The names coexist without clashes (checked in `playground/`).
 3. **Highlighting extension** (VS Code): colour every name the `wolfram`
    package exports, from a word list generated at build time. Hover
    (idris2-lsp) gives the exact origin.
