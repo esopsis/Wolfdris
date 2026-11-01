@@ -217,7 +217,9 @@ the opt-in `Wolfram.Symbolic.Unsafe`); the modules can also be imported
 one by one. Any Wolfram function without a wrapper can still be called
 with a `%foreign "wolfram:Name"` declaration of your own (see "Writing a
 wrapper"). [playground/](playground/Main.idr) is a package set up for
-trying things in an editor with the Idris language server.
+trying things in an editor with the Idris language server, and
+[editor/vscode](editor/vscode/README.md) is a small VS Code extension that
+colours the library's names, the way a notebook marks built-ins.
 
 | Module | What it gives |
 |---|---|

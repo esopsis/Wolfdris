@@ -1,0 +1,41 @@
+{
+  "name": "wolfdris-highlight",
+  "displayName": "Wolfdris highlight",
+  "description": "Colours the Wolfdris wrapper library's names in Idris files, so Wolfram built-ins stand out.",
+  "publisher": "wolfdris",
+  "version": "0.1.0",
+  "license": "MIT",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Other"],
+  "extensionKind": ["ui", "workspace"],
+  "activationEvents": ["onLanguage:idris"],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Wolfdris highlight",
+      "properties": {
+        "wolfdris.highlight.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Colour the names of the Wolfdris wrapper library in Idris files."
+        },
+        "wolfdris.highlight.color": {
+          "type": "string",
+          "default": "#E8735A",
+          "description": "Colour of library names with a dark theme (CSS colour, e.g. #E8735A)."
+        },
+        "wolfdris.highlight.lightColor": {
+          "type": "string",
+          "default": "#B4432A",
+          "description": "Colour of library names with a light theme."
+        },
+        "wolfdris.highlight.fontStyle": {
+          "type": "string",
+          "enum": ["normal", "italic", "bold"],
+          "default": "normal",
+          "description": "Extra style for library names, besides the colour."
+        }
+      }
+    }
+  }
+}

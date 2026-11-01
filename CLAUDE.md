@@ -703,9 +703,26 @@ wrappers to primitive element types.
      my fingertips") re-exports every module (`import public`) except the
      opt-in `Symbolic.Unsafe`; the topic modules still import one by one.
      The names coexist without clashes (checked in `playground/`).
-3. **Highlighting extension** (VS Code): colour every name the `wolfram`
-   package exports, from a word list generated at build time. Hover
-   (idris2-lsp) gives the exact origin.
+3. **Highlighting extension** — done 2026-11-01, working in the user's
+   VS Code. `editor/vscode/` (plain JS, no dependencies), built by
+   `scripts/vscode-extension.sh` → `editor/vscode/build/
+   wolfdris-highlight.vsix`, installed with `code --install-extension`
+   from Windows. Rebuild and reinstall after adding wrappers.
+   - **Colour decided with the user: coral red** `#E8735A` (dark themes),
+     `#B4432A` (light), no italic; settings `wolfdris.highlight.*`.
+     Wolfram's brand red as a mnemonic; softer than pure red so it isn't
+     read as an error, and free in the default dark theme.
+   - **Decorations, not a TextMate grammar**: idris2-lsp sends semantic
+     tokens, which would override grammar scopes; decorations draw on top.
+     `extensionKind: ["ui", "workspace"]` — it runs in the Windows UI and
+     colours files in WSL windows.
+   - `gen_names.py`: lowercase names after `export`/`public export` in
+     `lib/src` (same line or next), **minus every name the Idris Prelude
+     also declares** (read from `~/src/Idris2/libs/prelude`): `sin`,
+     `exp`, `log`, `pi`, but also `euler` and `apply`. Comments and
+     strings are skipped; it matches names, so a local `table` is
+     coloured too. No Node in WSL: `package_vsix.py` writes the `.vsix`
+     zip and manifest itself.
 4. **Runtime gaps:** `Data.Buffer` (4 conformance tests; `ByteArray`
    vs a packed array in the runtime — measure), processes (`system`,
    `popen`; first decide whose shell: Windows or WSL), `json_001` speed
